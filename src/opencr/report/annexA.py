@@ -77,6 +77,7 @@ def generate_annex_a(
         results = json.load(f)
 
     generated_files: dict[str, list[Path]] = {"tables": [], "figures": []}
+    task_type = results.get("task_type", "classification")
 
     # Generate summary table
     table_path = _generate_summary_table(results, tables_dir)
@@ -87,20 +88,29 @@ def generate_annex_a(
     generated_files["tables"].append(md_path)
 
     if HAS_MATPLOTLIB:
-        # Generate ROC curve
-        roc_path = _generate_roc_curve(results, run_dir, figures_dir, config)
-        if roc_path:
-            generated_files["figures"].append(roc_path)
+        if task_type == "regression":
+            scatter_path = _generate_regression_scatter(results, run_dir, figures_dir, config)
+            if scatter_path:
+                generated_files["figures"].append(scatter_path)
 
-        # Generate fuel gauge visualization
-        gauge_path = _generate_fuel_gauge(results, run_dir, figures_dir, config)
-        if gauge_path:
-            generated_files["figures"].append(gauge_path)
+            error_path = _generate_regression_error(results, run_dir, figures_dir, config)
+            if error_path:
+                generated_files["figures"].append(error_path)
+        else:
+            # Generate ROC curve
+            roc_path = _generate_roc_curve(results, run_dir, figures_dir, config)
+            if roc_path:
+                generated_files["figures"].append(roc_path)
 
-        # Generate metrics bar plot
-        bar_path = _generate_metrics_barplot(results, figures_dir, config)
-        if bar_path:
-            generated_files["figures"].append(bar_path)
+            # Generate fuel gauge visualization
+            gauge_path = _generate_fuel_gauge(results, run_dir, figures_dir, config)
+            if gauge_path:
+                generated_files["figures"].append(gauge_path)
+
+            # Generate metrics bar plot
+            bar_path = _generate_metrics_barplot(results, figures_dir, config)
+            if bar_path:
+                generated_files["figures"].append(bar_path)
 
     logger.info(
         f"Generated {len(generated_files['tables'])} tables, "
@@ -122,34 +132,59 @@ def _generate_summary_table(results: dict, output_dir: Path) -> Path:
 
     folds = results.get("folds", [])
     aggregated = results.get("aggregated_metrics", {})
+    metrics_ci = results.get("metrics_ci", {})
+    target = results.get("target", "unknown")
+    task_type = results.get("task_type", "unknown")
 
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
 
-        # Header
-        writer.writerow(["Fold", "Subject", "N_Train", "N_Test", "Accuracy", "F1", "AUC"])
+        writer.writerow(["Target", target])
+        writer.writerow(["Task", task_type])
+        writer.writerow([])
+
+        if task_type == "regression":
+            writer.writerow(["Fold", "Subject", "N_Train", "N_Test", "RMSE", "MAE", "R2"])
+        else:
+            writer.writerow(["Fold", "Subject", "N_Train", "N_Test", "Accuracy", "F1", "AUC"])
 
         # Fold rows
         for fold in folds:
             m = fold["metrics"]
-            auc = m.get("auc_roc")
-            writer.writerow(
-                [
-                    fold["fold_idx"],
-                    fold["test_subject"],
-                    fold["n_train"],
-                    fold["n_test"],
-                    f"{m['accuracy']:.4f}",
-                    f"{m['f1']:.4f}",
-                    f"{auc:.4f}" if auc else "N/A",
-                ]
-            )
+            if task_type == "regression":
+                writer.writerow(
+                    [
+                        fold["fold_idx"],
+                        fold["test_subject"],
+                        fold["n_train"],
+                        fold["n_test"],
+                        f"{m['rmse']:.4f}",
+                        f"{m['mae']:.4f}",
+                        f"{m['r2']:.4f}",
+                    ]
+                )
+            else:
+                auc = m.get("auc_roc")
+                writer.writerow(
+                    [
+                        fold["fold_idx"],
+                        fold["test_subject"],
+                        fold["n_train"],
+                        fold["n_test"],
+                        f"{m['accuracy']:.4f}",
+                        f"{m['f1']:.4f}",
+                        f"{auc:.4f}" if auc else "N/A",
+                    ]
+                )
 
         # Aggregated row
         writer.writerow([])
-        writer.writerow(["Metric", "Mean", "Std", "Min", "Max"])
+        writer.writerow(["Metric", "Mean", "Std", "Min", "Max", "CI_Low", "CI_High"])
         for metric_name, stats in aggregated.items():
             if isinstance(stats, dict) and "mean" in stats:
+                ci = metrics_ci.get(metric_name, {})
+                ci_low = f"{ci['low']:.4f}" if "low" in ci else "N/A"
+                ci_high = f"{ci['high']:.4f}" if "high" in ci else "N/A"
                 writer.writerow(
                     [
                         metric_name,
@@ -157,6 +192,8 @@ def _generate_summary_table(results: dict, output_dir: Path) -> Path:
                         f"{stats['std']:.4f}",
                         f"{stats['min']:.4f}",
                         f"{stats['max']:.4f}",
+                        ci_low,
+                        ci_high,
                     ]
                 )
 
@@ -170,41 +207,65 @@ def _generate_markdown_table(results: dict, output_dir: Path) -> Path:
 
     folds = results.get("folds", [])
     aggregated = results.get("aggregated_metrics", {})
+    metrics_ci = results.get("metrics_ci", {})
+    target = results.get("target", "unknown")
+    task_type = results.get("task_type", "unknown")
+
+    if task_type == "regression":
+        header = "| Fold | Subject | N_Train | N_Test | RMSE | MAE | R2 |"
+        divider = "|------|---------|---------|--------|------|-----|----|"
+    else:
+        header = "| Fold | Subject | N_Train | N_Test | Accuracy | F1 | AUC |"
+        divider = "|------|---------|---------|--------|----------|-----|-----|"
 
     lines = [
         "# Annex A: LOSO Cross-Validation Results",
         "",
+        f"Target: {target}",
+        f"Task: {task_type}",
+        "",
         "## Per-Fold Results",
         "",
-        "| Fold | Subject | N_Train | N_Test | Accuracy | F1 | AUC |",
-        "|------|---------|---------|--------|----------|-----|-----|",
+        header,
+        divider,
     ]
 
     for fold in folds:
         m = fold["metrics"]
-        auc = m.get("auc_roc")
-        auc_str = f"{auc:.4f}" if auc else "N/A"
-        lines.append(
-            f"| {fold['fold_idx']} | {fold['test_subject']} | "
-            f"{fold['n_train']} | {fold['n_test']} | "
-            f"{m['accuracy']:.4f} | {m['f1']:.4f} | {auc_str} |"
-        )
+        if task_type == "regression":
+            lines.append(
+                f"| {fold['fold_idx']} | {fold['test_subject']} | "
+                f"{fold['n_train']} | {fold['n_test']} | "
+                f"{m['rmse']:.4f} | {m['mae']:.4f} | {m['r2']:.4f} |"
+            )
+        else:
+            auc = m.get("auc_roc")
+            auc_str = f"{auc:.4f}" if auc else "N/A"
+            lines.append(
+                f"| {fold['fold_idx']} | {fold['test_subject']} | "
+                f"{fold['n_train']} | {fold['n_test']} | "
+                f"{m['accuracy']:.4f} | {m['f1']:.4f} | {auc_str} |"
+            )
 
     lines.extend(
         [
             "",
             "## Aggregated Metrics",
             "",
-            "| Metric | Mean | Std | Min | Max |",
-            "|--------|------|-----|-----|-----|",
+            "| Metric | Mean | Std | Min | Max | CI Low | CI High |",
+            "|--------|------|-----|-----|-----|--------|---------|",
         ]
     )
 
     for metric_name, stats in aggregated.items():
         if isinstance(stats, dict) and "mean" in stats:
+            ci = metrics_ci.get(metric_name, {})
+            ci_low = f"{ci['low']:.4f}" if "low" in ci else "N/A"
+            ci_high = f"{ci['high']:.4f}" if "high" in ci else "N/A"
             lines.append(
                 f"| {metric_name} | {stats['mean']:.4f} | "
-                f"{stats['std']:.4f} | {stats['min']:.4f} | {stats['max']:.4f} |"
+                f"{stats['std']:.4f} | {stats['min']:.4f} | {stats['max']:.4f} | "
+                f"{ci_low} | {ci_high} |"
             )
 
     with open(md_path, "w", encoding="utf-8") as f:
@@ -214,6 +275,53 @@ def _generate_markdown_table(results: dict, output_dir: Path) -> Path:
     return md_path
 
 
+def _compute_auc(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    *,
+    class_order: np.ndarray | list | None = None,
+) -> tuple[float | None, tuple[np.ndarray, np.ndarray] | None]:
+    """Compute AUC for binary or multiclass classification."""
+    from sklearn.metrics import roc_auc_score
+
+    if y_proba is None or len(y_proba) == 0:
+        return None, None
+
+    y_proba_arr = np.asarray(y_proba)
+    classes = np.unique(y_true)
+
+    if class_order is not None and y_proba_arr.ndim == 2:
+        order = np.asarray(class_order)
+        if y_proba_arr.shape[1] == order.size:
+            try:
+                indices = [int(np.where(order == cls)[0][0]) for cls in classes]
+                y_proba_arr = y_proba_arr[:, indices]
+            except Exception:
+                return None, None
+
+    if len(classes) == 2:
+        pos_class = classes[-1]
+        y_binary = (y_true == pos_class).astype(int)
+        if y_proba_arr.ndim == 1:
+            y_score = y_proba_arr
+        else:
+            if y_proba_arr.shape[1] != len(classes):
+                return None, None
+            pos_idx = int(np.where(classes == pos_class)[0][0])
+            y_score = y_proba_arr[:, pos_idx]
+        auc_val = roc_auc_score(y_binary, y_score)
+        return auc_val, (y_binary, y_score)
+
+    if y_proba_arr.ndim != 2 or y_proba_arr.shape[1] != len(classes):
+        return None, None
+
+    if y_proba_arr.ndim != 2 or y_proba_arr.shape[1] != len(classes):
+        return None, None
+
+    auc_val = roc_auc_score(y_true, y_proba_arr, multi_class="ovr", average="macro")
+    return auc_val, None
+
+
 def _generate_roc_curve(
     results: dict,
     run_dir: Path,
@@ -221,7 +329,7 @@ def _generate_roc_curve(
     config: AnnexAConfig,
 ) -> Path | None:
     """Generate ROC curve from predictions."""
-    from sklearn.metrics import auc, roc_curve
+    from sklearn.metrics import roc_curve
 
     try:
         plt.style.use(config.style)
@@ -231,6 +339,7 @@ def _generate_roc_curve(
     fig, ax = plt.subplots(figsize=config.figsize)
 
     folds = results.get("folds", [])
+    class_order = results.get("class_order")
     colors = plt.cm.tab10.colors
 
     all_tprs = []
@@ -247,22 +356,17 @@ def _generate_roc_curve(
             y_true = data["y_true"]
             y_proba = data["y_proba"]
 
-            if len(y_proba) == 0:
-                continue
-
-            # Handle multi-class by using one-vs-rest for first class
-            if y_proba.ndim == 2 and y_proba.shape[1] > 1:
-                # Use positive class probability
-                y_score = y_proba[:, 1] if y_proba.shape[1] == 2 else y_proba.max(axis=1)
-                y_binary = (y_true == y_true.max()).astype(int)
-            else:
-                y_score = y_proba.ravel()
-                y_binary = y_true
-
             try:
-                fpr, tpr, _ = roc_curve(y_binary, y_score)
-                roc_auc = auc(fpr, tpr)
+                roc_auc, roc_inputs = _compute_auc(y_true, y_proba, class_order=class_order)
+                if roc_auc is None:
+                    continue
                 aucs.append(roc_auc)
+
+                if roc_inputs is None:
+                    continue
+
+                y_binary, y_score = roc_inputs
+                fpr, tpr, _ = roc_curve(y_binary, y_score)
 
                 # Interpolate for mean
                 interp_tpr = np.interp(mean_fpr, fpr, tpr)
@@ -295,7 +399,7 @@ def _generate_roc_curve(
         mean_tpr,
         color="blue",
         lw=2,
-        label=f"Mean ROC (AUC={mean_auc:.2f} ± {std_auc:.2f})",
+        label=f"Mean ROC (AUC={mean_auc:.2f} +/- {std_auc:.2f})",
     )
 
     # Confidence interval
@@ -454,7 +558,11 @@ def _generate_metrics_barplot(
     ax.set_title("Aggregated Metrics - LOSO Cross-Validation", fontsize=14)
     ax.set_xticks(x)
     ax.set_xticklabels(metrics, rotation=45, ha="right")
-    ax.set_ylim(0, 1.1)
+    y_max = max((m + s) for m, s in zip(means, stds, strict=False))
+    if y_max <= 1.1:
+        ax.set_ylim(0, 1.1)
+    else:
+        ax.set_ylim(0, y_max * 1.1)
     ax.grid(True, axis="y", alpha=0.3)
 
     # Add value labels
@@ -476,3 +584,100 @@ def _generate_metrics_barplot(
 
     logger.info(f"Generated metrics bar plot: {bar_path}")
     return bar_path
+
+
+def _generate_regression_scatter(
+    results: dict,
+    run_dir: Path,
+    output_dir: Path,
+    config: AnnexAConfig,
+) -> Path | None:
+    """Generate scatter plot for regression predictions."""
+    folds = results.get("folds", [])
+    if not folds:
+        return None
+
+    fold = folds[0]
+    pred_path = run_dir / f"fold_{fold['fold_idx']:02d}" / "predictions.npz"
+    if not pred_path.exists():
+        return None
+
+    with np.load(pred_path, allow_pickle=True) as data:
+        y_true = data["y_true"]
+        y_pred = data["y_pred"]
+
+    if len(y_true) == 0:
+        return None
+
+    try:
+        plt.style.use(config.style)
+    except Exception:
+        pass
+
+    fig, ax = plt.subplots(figsize=config.figsize)
+    ax.scatter(y_true, y_pred, alpha=0.6, edgecolor="none")
+
+    min_val = float(min(np.min(y_true), np.min(y_pred)))
+    max_val = float(max(np.max(y_true), np.max(y_pred)))
+    ax.plot([min_val, max_val], [min_val, max_val], "k--", lw=1)
+
+    ax.set_xlabel("True OpenCR", fontsize=12)
+    ax.set_ylabel("Predicted OpenCR", fontsize=12)
+    ax.set_title("OpenCR Regression: True vs Predicted", fontsize=14)
+    ax.grid(True, alpha=0.3)
+
+    scatter_path = output_dir / "opencr_scatter.png"
+    fig.tight_layout()
+    fig.savefig(scatter_path, dpi=config.dpi, bbox_inches="tight")
+    plt.close(fig)
+
+    logger.info(f"Generated regression scatter: {scatter_path}")
+    return scatter_path
+
+
+def _generate_regression_error(
+    results: dict,
+    run_dir: Path,
+    output_dir: Path,
+    config: AnnexAConfig,
+) -> Path | None:
+    """Generate temporal error plot for regression predictions."""
+    folds = results.get("folds", [])
+    if not folds:
+        return None
+
+    fold = folds[0]
+    pred_path = run_dir / f"fold_{fold['fold_idx']:02d}" / "predictions.npz"
+    if not pred_path.exists():
+        return None
+
+    with np.load(pred_path, allow_pickle=True) as data:
+        y_true = data["y_true"]
+        y_pred = data["y_pred"]
+
+    if len(y_true) == 0:
+        return None
+
+    error = y_pred - y_true
+    x = np.arange(len(error))
+
+    try:
+        plt.style.use(config.style)
+    except Exception:
+        pass
+
+    fig, ax = plt.subplots(figsize=config.figsize)
+    ax.plot(x, error, lw=1.5, color="steelblue")
+    ax.axhline(0, color="black", lw=1, linestyle="--")
+    ax.set_xlabel("Window Index", fontsize=12)
+    ax.set_ylabel("Prediction Error", fontsize=12)
+    ax.set_title("OpenCR Regression: Temporal Error", fontsize=14)
+    ax.grid(True, alpha=0.3)
+
+    error_path = output_dir / "opencr_error.png"
+    fig.tight_layout()
+    fig.savefig(error_path, dpi=config.dpi, bbox_inches="tight")
+    plt.close(fig)
+
+    logger.info(f"Generated regression error plot: {error_path}")
+    return error_path

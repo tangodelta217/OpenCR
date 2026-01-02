@@ -14,15 +14,13 @@ from rich.panel import Panel
 from opencr import __version__
 from opencr.logging import get_logger, setup_logging
 
-# Initialize Typer app
 app = typer.Typer(
     name="opencr",
-    help="OpenCR: Open Cognitive Radio - ML/Signal Processing Pipeline",
+    help="OpenCR: Open Compensatory Reserve - ML/Signal Processing Pipeline",
     add_completion=False,
     rich_markup_mode="rich",
 )
 
-# Subcommand groups
 data_app = typer.Typer(help="Data management: fetch, preprocess, split")
 baseline_app = typer.Typer(help="Baseline model: train, evaluate")
 report_app = typer.Typer(help="Report generation: annexA, metrics")
@@ -35,7 +33,6 @@ app.add_typer(report_app, name="report")
 app.add_typer(edge_app, name="edge")
 app.add_typer(demo_app, name="demo")
 
-# Console for rich output
 console = Console()
 logger = get_logger(__name__)
 
@@ -92,7 +89,7 @@ def main(
     ),
 ) -> None:
     """
-    OpenCR: Open Cognitive Radio - Professional ML/Signal Processing Pipeline.
+    OpenCR: Open Compensatory Reserve - Professional ML/Signal Processing Pipeline.
 
     Use 'opencr COMMAND --help' for more information on a specific command.
 
@@ -152,7 +149,6 @@ def data_fetch(
     setup_logging()
     logger.info(f"Validating dataset: {input_dir}")
 
-    # Validate input directory
     if not input_dir.exists():
         console.print(f"[red]Error:[/red] Input directory not found: {input_dir}")
         raise typer.Exit(code=1)
@@ -161,7 +157,6 @@ def data_fetch(
         console.print(f"[red]Error:[/red] Input path is not a directory: {input_dir}")
         raise typer.Exit(code=1)
 
-    # Select adapter
     adapters = {"npz": LocalNpzAdapter}
     if adapter not in adapters:
         console.print(
@@ -169,14 +164,12 @@ def data_fetch(
         )
         raise typer.Exit(code=1)
 
-    # Create adapter and validate
     try:
         dataset_adapter = adapters[adapter](input_dir)
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1) from e
 
-    # Validate dataset structure
     is_valid, errors = dataset_adapter.validate()
     if not is_valid:
         console.print("[red]Dataset validation failed:[/red]")
@@ -184,18 +177,26 @@ def data_fetch(
             console.print(f"  - {error}")
         raise typer.Exit(code=1)
 
-    # Generate data card
     data_card = dataset_adapter.describe()
 
-    # Ensure output directory exists
     _ensure_dir(output_dir)
 
-    # Write data card
     card_path = output_dir / "data_card.json"
     with open(card_path, "w", encoding="utf-8") as f:
         json.dump(data_card.to_dict(), f, indent=2, ensure_ascii=False)
 
     logger.info(f"Data card written to: {card_path}")
+
+    if data_card.subjects_with_steps and data_card.subjects_missing_steps:
+        logger.warning(
+            "Mixed protocol step availability: %d with steps, %d missing steps",
+            len(data_card.subjects_with_steps),
+            len(data_card.subjects_missing_steps),
+        )
+        console.print(
+            f"[yellow]Warning:[/yellow] Protocol levels missing for "
+            f"{len(data_card.subjects_missing_steps)} subject(s)."
+        )
 
     console.print(
         Panel(
@@ -247,6 +248,16 @@ def data_preprocess(
         "-q",
         help="SQI threshold for quality gating (0.0-1.0)",
     ),
+    target_direction: str = typer.Option(
+        "auto",
+        "--target-direction",
+        help="Target direction: auto, increasing, decreasing",
+    ),
+    ordinal_bins: int = typer.Option(
+        4,
+        "--ordinal-bins",
+        help="Number of ordinal bins for y_ord",
+    ),
     filter_low: float = typer.Option(
         0.5,
         "--filter-low",
@@ -256,6 +267,42 @@ def data_preprocess(
         4.0,
         "--filter-high",
         help="Bandpass filter high frequency (Hz). 0 = no filter.",
+    ),
+    bioz_filter_low: float = typer.Option(
+        0.05,
+        "--bioz-filter-low",
+        help="BioZ filter low frequency (Hz). 0 = no filter.",
+    ),
+    bioz_filter_high: float = typer.Option(
+        0.0,
+        "--bioz-filter-high",
+        help="BioZ filter high frequency (Hz). 0 = no filter.",
+    ),
+    data_card: Path | None = typer.Option(
+        None,
+        "--data-card",
+        help="Path to data_card.json for reproducibility",
+    ),
+    data_hash: str = typer.Option(
+        "hybrid",
+        "--data-hash",
+        "--hash-mode",
+        help="Dataset hash method: stable, metadata, content, hybrid, none",
+    ),
+    data_hash_threshold_mb: float = typer.Option(
+        200.0,
+        "--data-hash-threshold-mb",
+        help="Hybrid hash threshold in MB (uses content below threshold)",
+    ),
+    protocol_levels: str | None = typer.Option(
+        None,
+        "--protocol-levels",
+        help="Comma-separated protocol levels (e.g., 0,-15,-30)",
+    ),
+    protocol_direction: str | None = typer.Option(
+        None,
+        "--protocol-direction",
+        help="Protocol direction: more_severe_lower or more_severe_higher",
     ),
 ) -> None:
     """
@@ -274,13 +321,15 @@ def data_preprocess(
     Example:
       opencr data preprocess data/raw --output data/processed --window-sec 30 --stride-sec 2
     """
+    import sys
+
     from opencr.data.adapters import LocalNpzAdapter
     from opencr.preprocess.pipeline import PreprocessingConfig, PreprocessingPipeline
+    from opencr.repro.manifest import build_manifest, compute_dataset_hash, write_manifest
 
     setup_logging()
     logger.info(f"Preprocessing data: {input_dir} -> {output_dir}")
 
-    # Validate input
     _validate_dir_exists(input_dir, "Input directory")
 
     if window_sec <= 0:
@@ -303,7 +352,92 @@ def data_preprocess(
         )
         raise typer.Exit(code=1)
 
-    # Create adapter
+    target_direction = target_direction.lower()
+    if target_direction not in {"auto", "increasing", "decreasing"}:
+        console.print("[red]Error:[/red] target-direction must be auto, increasing, or decreasing")
+        raise typer.Exit(code=1)
+
+    if ordinal_bins < 2:
+        console.print(f"[red]Error:[/red] ordinal-bins must be >= 2, got {ordinal_bins}")
+        raise typer.Exit(code=1)
+
+    data_hash = data_hash.lower()
+    if data_hash not in {"stable", "metadata", "content", "hybrid", "none"}:
+        console.print(
+            "[red]Error:[/red] data-hash must be stable, metadata, content, hybrid, or none"
+        )
+        raise typer.Exit(code=1)
+
+    if data_hash_threshold_mb <= 0:
+        console.print(
+            f"[red]Error:[/red] data-hash-threshold-mb must be positive, got {data_hash_threshold_mb}"
+        )
+        raise typer.Exit(code=1)
+
+    if data_card is not None:
+        _validate_file_exists(data_card, "data_card.json")
+    else:
+        candidate = input_dir / "data_card.json"
+        if candidate.exists():
+            data_card = candidate
+
+    protocol_config: dict[str, object] | None = None
+    protocol_path = input_dir / "protocol.json"
+
+    def _parse_protocol_levels(raw_levels: str) -> list[float]:
+        parts = [p.strip() for p in raw_levels.split(",") if p.strip()]
+        if not parts:
+            raise ValueError("protocol-levels must be a non-empty list")
+        return [float(p) for p in parts]
+
+    def _normalize_protocol_direction(raw_direction: str) -> str:
+        direction_map = {
+            "more_severe_lower": "decreasing",
+            "more_severe_higher": "increasing",
+        }
+        if raw_direction not in direction_map:
+            raise ValueError("protocol-direction must be more_severe_lower or more_severe_higher")
+        return direction_map[raw_direction]
+
+    if protocol_levels is not None or protocol_direction is not None:
+        if protocol_levels is None or protocol_direction is None:
+            console.print(
+                "[red]Error:[/red] protocol-levels and protocol-direction must be provided together"
+            )
+            raise typer.Exit(code=1)
+        try:
+            levels = _parse_protocol_levels(protocol_levels)
+            direction = _normalize_protocol_direction(protocol_direction)
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(code=1) from e
+        protocol_config = {"levels": levels, "direction": direction}
+        if protocol_path.exists():
+            logger.warning("protocol.json found but overridden by CLI protocol flags")
+    elif protocol_path.exists():
+        import json
+
+        with open(protocol_path, encoding="utf-8") as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            console.print("[red]Error:[/red] protocol.json must be a JSON object")
+            raise typer.Exit(code=1)
+        levels = payload.get("levels")
+        direction_raw = payload.get("direction")
+        if not isinstance(levels, list) or not levels:
+            console.print("[red]Error:[/red] protocol.json levels must be a non-empty list")
+            raise typer.Exit(code=1)
+        if not isinstance(direction_raw, str):
+            console.print("[red]Error:[/red] protocol.json direction must be a string")
+            raise typer.Exit(code=1)
+        try:
+            levels = [float(p) for p in levels]
+            direction = _normalize_protocol_direction(direction_raw)
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(code=1) from e
+        protocol_config = {"levels": levels, "direction": direction}
+
     try:
         adapter = LocalNpzAdapter(input_dir)
     except ValueError as e:
@@ -313,6 +447,8 @@ def data_preprocess(
     # Configure pipeline
     filter_low_val = filter_low if filter_low > 0 else None
     filter_high_val = filter_high if filter_high > 0 else None
+    bioz_filter_low_val = bioz_filter_low if bioz_filter_low > 0 else None
+    bioz_filter_high_val = bioz_filter_high if bioz_filter_high > 0 else None
 
     config = PreprocessingConfig(
         window_sec=window_sec,
@@ -320,12 +456,15 @@ def data_preprocess(
         resample_hz=resample_hz,
         filter_low_hz=filter_low_val,
         filter_high_hz=filter_high_val,
+        bioz_filter_low_hz=bioz_filter_low_val,
+        bioz_filter_high_hz=bioz_filter_high_val,
         sqi_threshold=sqi_threshold,
+        target_direction=target_direction,
+        ordinal_bins=ordinal_bins,
     )
 
     pipeline = PreprocessingPipeline(config)
 
-    # Show configuration
     console.print(
         Panel(
             f"[cyan]Preprocessing Configuration[/cyan]\\n\\n"
@@ -333,23 +472,23 @@ def data_preprocess(
             f"Output: [green]{output_dir}[/green]\\n"
             f"Window: {window_sec}s, Stride: {stride_sec}s\\n"
             f"Resample: {resample_hz or 'original'} Hz\\n"
-            f"Filter: {filter_low_val or 'none'}-{filter_high_val or 'none'} Hz\\n"
+            f"PPG filter: {filter_low_val or 'none'}-{filter_high_val or 'none'} Hz\\n"
+            f"BioZ filter: {bioz_filter_low_val or 'none'}-{bioz_filter_high_val or 'none'} Hz\\n"
             f"SQI threshold: {sqi_threshold}\\n"
+            f"Target direction: {target_direction}, Ordinal bins: {ordinal_bins}\\n"
             f"Subjects: {len(adapter.list_subjects())}",
             title="[bold]Preprocessing[/bold]",
         )
     )
 
-    # Run pipeline
     _ensure_dir(output_dir)
 
     try:
-        stats = pipeline.process_dataset(adapter, output_dir)
+        stats = pipeline.process_dataset(adapter, output_dir, protocol=protocol_config)
     except Exception as e:
         console.print(f"[red]Error during processing:[/red] {e}")
         raise typer.Exit(code=1) from e
 
-    # Show results
     valid_pct = stats["valid_windows"] / max(stats["total_windows"], 1) * 100
     console.print(
         Panel(
@@ -362,6 +501,37 @@ def data_preprocess(
             title="[green]Complete[/green]",
         )
     )
+
+    threshold_bytes = int(data_hash_threshold_mb * 1024 * 1024)
+    dataset_hash = compute_dataset_hash(
+        output_dir / "processed",
+        method=data_hash,
+        threshold_bytes=threshold_bytes if data_hash == "hybrid" else None,
+    )
+    manifest = build_manifest(
+        stage="preprocess",
+        seed=None,
+        command_args=sys.argv,
+        data_card_path=data_card,
+        dataset_hash=dataset_hash,
+        config={"preprocess": config.to_dict()},
+        artifacts={
+            "config_path": str(output_dir / "config.json"),
+            "stats_path": str(output_dir / "stats.json"),
+            "processed_dir": str(output_dir / "processed"),
+            "target_map_path": str(output_dir / "target_map.json"),
+        },
+        extra={
+            "subjects_missing_steps": stats.get("subjects_missing_steps", []),
+            "target_map_source": stats.get("target_map_source"),
+            "protocol_levels": stats.get("protocol_levels"),
+            "protocol_direction": stats.get("protocol_direction"),
+            "target_map_warning": stats.get("target_map_warning"),
+            "hash_mode": data_hash,
+            "hash_threshold_bytes": threshold_bytes if data_hash == "hybrid" else None,
+        },
+    )
+    write_manifest(output_dir / "manifest.json", manifest)
 
 
 # =============================================================================
@@ -386,6 +556,37 @@ def baseline_train(
         "--cv",
         help="Cross-validation strategy: loso (leave-one-subject-out)",
     ),
+    use_ppg: bool = typer.Option(
+        True,
+        "--use-ppg/--no-use-ppg",
+        help="Include PPG features",
+    ),
+    use_bioz: bool = typer.Option(
+        True,
+        "--use-bioz/--no-use-bioz",
+        help="Include BioZ features",
+    ),
+    use_sqi_gating: bool = typer.Option(
+        True,
+        "--use-sqi-gating/--no-use-sqi-gating",
+        help="Use SQI valid_mask gating",
+    ),
+    include_sqi_features: bool = typer.Option(
+        True,
+        "--include-sqi-features/--no-include-sqi-features",
+        help="Include SQI-derived features",
+    ),
+    sqi_gating_scope: str = typer.Option(
+        "auto",
+        "--sqi-gating-scope",
+        help="SQI gating scope: auto, min, ppg, bioz, none",
+    ),
+    target: str = typer.Option(
+        "opencr",
+        "--target",
+        "-t",
+        help="Target: opencr (regression), ordinal (classification), step (classification)",
+    ),
     model_type: str = typer.Option(
         "random_forest",
         "--model",
@@ -397,10 +598,20 @@ def baseline_train(
         "--n-estimators",
         help="Number of trees/estimators",
     ),
+    n_boot: int = typer.Option(
+        200,
+        "--n-boot",
+        help="Number of bootstrap resamples for CI",
+    ),
     seed: int = typer.Option(
         42,
         "--seed",
         help="Random seed",
+    ),
+    data_card: Path | None = typer.Option(
+        None,
+        "--data-card",
+        help="Path to data_card.json for reproducibility",
     ),
 ) -> None:
     """
@@ -411,19 +622,30 @@ def baseline_train(
 
     \\b
     Example:
-      opencr baseline train runs/preprocess/processed --output runs/baseline --cv loso
+      opencr baseline train runs/preprocess/processed --output runs/baseline --cv loso --target opencr
     """
     import json
+    import sys
+    from dataclasses import asdict
 
     import numpy as np
 
     from opencr.evaluation.cv import loso_split
     from opencr.evaluation.metrics import (
         aggregate_fold_metrics,
+        align_proba_to_classes,
         compute_classification_metrics,
+        compute_metrics_with_ci,
+        compute_regression_metrics,
     )
-    from opencr.features.fusion import extract_all_features
+    from opencr.features.fusion import FeatureConfig, extract_all_features
     from opencr.models.baseline import BaselineModel, ModelConfig, ModelType, TaskType
+    from opencr.repro.manifest import (
+        build_manifest,
+        compute_dataset_hash,
+        load_manifest,
+        write_manifest,
+    )
 
     setup_logging()
     logger.info(f"Training baseline: {processed_dir}")
@@ -431,7 +653,41 @@ def baseline_train(
     _validate_dir_exists(processed_dir, "Processed data directory")
     _ensure_dir(output_dir)
 
-    # Find all processed subject files
+    target = target.lower()
+    if target not in {"opencr", "ordinal", "step"}:
+        console.print("[red]Error:[/red] target must be opencr, ordinal, or step")
+        raise typer.Exit(code=1)
+
+    cv = cv.lower()
+    if cv not in {"loso"}:
+        console.print("[red]Error:[/red] cv must be 'loso' (leave-one-subject-out)")
+        raise typer.Exit(code=1)
+
+    if not use_ppg and not use_bioz:
+        console.print("[red]Error:[/red] At least one of --use-ppg or --use-bioz must be true")
+        raise typer.Exit(code=1)
+
+    sqi_gating_scope = sqi_gating_scope.lower()
+    if sqi_gating_scope not in {"auto", "min", "ppg", "bioz", "none"}:
+        console.print("[red]Error:[/red] sqi-gating-scope must be auto, min, ppg, bioz, or none")
+        raise typer.Exit(code=1)
+
+    if sqi_gating_scope == "auto":
+        if use_ppg and not use_bioz:
+            effective_scope = "ppg"
+        elif use_bioz and not use_ppg:
+            effective_scope = "bioz"
+        else:
+            effective_scope = "min"
+    else:
+        effective_scope = sqi_gating_scope
+
+    if not use_sqi_gating or effective_scope == "none":
+        gating_enabled = False
+        effective_scope = "none"
+    else:
+        gating_enabled = True
+
     npz_files = sorted(processed_dir.glob("*.npz"))
     if not npz_files:
         console.print(f"[red]Error:[/red] No processed .npz files in {processed_dir}")
@@ -439,12 +695,74 @@ def baseline_train(
 
     console.print(f"[cyan]Found {len(npz_files)} subjects[/cyan]")
 
-    # Load all subjects and extract features
+    preprocess_manifest = load_manifest(processed_dir.parent / "manifest.json")
+    preprocess_config = None
+    if preprocess_manifest:
+        preprocess_config = preprocess_manifest.get("config", {}).get("preprocess")
+    if preprocess_config is None:
+        config_path = processed_dir.parent / "config.json"
+        if config_path.exists():
+            with open(config_path) as f:
+                preprocess_config = json.load(f)
+
+    subjects_missing_steps: list[str] = []
+    if preprocess_manifest:
+        subjects_missing_steps = preprocess_manifest.get("subjects_missing_steps", []) or []
+    if not subjects_missing_steps:
+        stats_path = processed_dir.parent / "stats.json"
+        if stats_path.exists():
+            with open(stats_path, encoding="utf-8") as f:
+                stats = json.load(f)
+            subjects_missing_steps = stats.get("subjects_missing_steps", []) or []
+
+    if target in {"opencr", "ordinal"} and subjects_missing_steps:
+        console.print(
+            "[red]Error:[/red] Missing protocol steps for subjects: "
+            f"{', '.join(subjects_missing_steps)}"
+        )
+        console.print("Re-run preprocessing with protocol steps or choose --target step.")
+        raise typer.Exit(code=1)
+
+    if data_card is not None:
+        _validate_file_exists(data_card, "data_card.json")
+    else:
+        data_card_value = None
+        if preprocess_manifest:
+            data_card_value = preprocess_manifest.get("data_card_path")
+        if data_card_value:
+            data_card = Path(data_card_value)
+        else:
+            candidate = processed_dir.parent / "data_card.json"
+            if candidate.exists():
+                data_card = candidate
+
+    if preprocess_manifest and "dataset_hash" in preprocess_manifest:
+        dataset_hash = preprocess_manifest.get("dataset_hash")
+    else:
+        dataset_hash = compute_dataset_hash(processed_dir, method="hybrid")
+
+    feature_config = FeatureConfig(
+        include_ppg=use_ppg,
+        include_bioz=use_bioz,
+        include_sqi=include_sqi_features,
+        include_cross=use_ppg and use_bioz,
+    )
+
     all_features = []
     all_labels = []
     all_subjects = []
     subject_ids = []
+    target_direction = None
+    ordinal_bins = None
+    total_windows = 0
+    total_valid = 0
+    total_valid_min = 0
+    total_valid_ppg = 0
+    total_valid_bioz = 0
+    has_ppg_mask = True
+    has_bioz_mask = True
     fs = 100.0  # Default, will be overwritten if available
+    subject_counts: dict[str, dict[str, int | None]] = {}
 
     for npz_path in npz_files:
         subject_id = npz_path.stem
@@ -452,23 +770,147 @@ def baseline_train(
 
         with np.load(npz_path, allow_pickle=True) as data:
             X = data["X"]
-            y = data["y"]
             sqi = data["sqi"]
-            valid_mask = data["valid_mask"]
             meta = data["metadata"].item() if "metadata" in data.files else {}
             fs = meta.get("fs", 100.0)
 
-            # Skip subjects with no valid windows
-            if valid_mask.sum() == 0:
-                logger.warning(f"Subject {subject_id} has no valid windows, skipping")
-                continue
+            if target_direction is None:
+                target_direction = meta.get("target_direction")
+            if ordinal_bins is None:
+                ordinal_bins = meta.get("ordinal_bins")
 
-            # Extract features from valid windows only
-            X_valid = X[valid_mask]
-            y_valid = y[valid_mask] if len(y) > 0 else np.zeros(X_valid.shape[0])
-            sqi_valid = sqi[valid_mask]
+            if "y_step" in data.files:
+                y_step = data["y_step"]
+            elif "y" in data.files:
+                y_step = data["y"]
+            else:
+                y_step = np.array([])
+            y_opencr = data["y_opencr"] if "y_opencr" in data.files else np.array([])
+            y_ord = data["y_ord"] if "y_ord" in data.files else np.array([])
 
-            features, feature_names = extract_all_features(X_valid, fs, sqi_valid)
+            total_windows += X.shape[0]
+
+            valid_mask_min = None
+            valid_mask_ppg = None
+            valid_mask_bioz = None
+            if "valid_mask_min" in data.files:
+                valid_mask_min = data["valid_mask_min"]
+            elif "valid_mask" in data.files:
+                valid_mask_min = data["valid_mask"]
+
+            if "valid_mask_ppg" in data.files:
+                valid_mask_ppg = data["valid_mask_ppg"]
+            if "valid_mask_bioz" in data.files:
+                valid_mask_bioz = data["valid_mask_bioz"]
+
+            if valid_mask_ppg is not None and valid_mask_ppg.size == 0:
+                valid_mask_ppg = None
+            if valid_mask_bioz is not None and valid_mask_bioz.size == 0:
+                valid_mask_bioz = None
+
+            threshold = float(meta.get("sqi_threshold", 0.5))
+            channel_names = meta.get("channels") or ["ppg", "bioz"]
+            channel_names_lower = [str(name).lower() for name in channel_names]
+
+            if sqi.ndim > 1:
+                if valid_mask_ppg is None and "ppg" in channel_names_lower:
+                    idx = channel_names_lower.index("ppg")
+                    valid_mask_ppg = sqi[:, idx] >= threshold
+                if valid_mask_bioz is None and "bioz" in channel_names_lower:
+                    idx = channel_names_lower.index("bioz")
+                    valid_mask_bioz = sqi[:, idx] >= threshold
+                if valid_mask_min is None:
+                    valid_mask_min = sqi.min(axis=1) >= threshold
+            else:
+                if valid_mask_min is None:
+                    valid_mask_min = sqi >= threshold
+                if channel_names_lower:
+                    if channel_names_lower[0] == "ppg" and valid_mask_ppg is None:
+                        valid_mask_ppg = valid_mask_min
+                    if channel_names_lower[0] == "bioz" and valid_mask_bioz is None:
+                        valid_mask_bioz = valid_mask_min
+
+            if valid_mask_min is None:
+                valid_mask_min = np.ones(X.shape[0], dtype=bool)
+
+            subject_counts[subject_id] = {
+                "total": int(X.shape[0]),
+                "ppg": int(valid_mask_ppg.sum()) if valid_mask_ppg is not None else None,
+                "bioz": int(valid_mask_bioz.sum()) if valid_mask_bioz is not None else None,
+                "min": int(valid_mask_min.sum()),
+            }
+
+            total_valid_min += int(valid_mask_min.sum())
+            if valid_mask_ppg is None:
+                has_ppg_mask = False
+            else:
+                total_valid_ppg += int(valid_mask_ppg.sum())
+            if valid_mask_bioz is None:
+                has_bioz_mask = False
+            else:
+                total_valid_bioz += int(valid_mask_bioz.sum())
+
+            if gating_enabled:
+                if effective_scope == "ppg":
+                    gating_mask = valid_mask_ppg
+                elif effective_scope == "bioz":
+                    gating_mask = valid_mask_bioz
+                else:
+                    gating_mask = valid_mask_min
+
+                if gating_mask is None:
+                    logger.warning(
+                        "SQI gating scope '%s' unavailable for %s; disabling gating for subject",
+                        effective_scope,
+                        subject_id,
+                    )
+                    gating_mask = np.ones(X.shape[0], dtype=bool)
+
+                total_valid += int(gating_mask.sum())
+
+                if gating_mask.sum() == 0:
+                    logger.warning(f"Subject {subject_id} has no valid windows, skipping")
+                    continue
+            else:
+                gating_mask = np.ones(X.shape[0], dtype=bool)
+                total_valid += X.shape[0]
+
+            if target == "opencr":
+                y_target = y_opencr
+                target_name = "y_opencr"
+            elif target == "ordinal":
+                y_target = y_ord
+                target_name = "y_ord"
+            else:
+                y_target = y_step
+                target_name = "y_step"
+
+            if y_target.size == 0:
+                console.print(
+                    f"[red]Error:[/red] {target_name} missing in {npz_path}. "
+                    "Re-run preprocessing with protocol steps or choose --target step."
+                )
+                raise typer.Exit(code=1)
+            if y_target.shape[0] != X.shape[0]:
+                console.print(
+                    f"[red]Error:[/red] {target_name} length does not match X in {npz_path} "
+                    f"({y_target.shape[0]} vs {X.shape[0]})"
+                )
+                raise typer.Exit(code=1)
+
+            if gating_enabled:
+                X_valid = X[gating_mask]
+                y_valid = y_target[gating_mask]
+                sqi_valid = sqi[gating_mask]
+            else:
+                X_valid = X
+                y_valid = y_target
+                sqi_valid = sqi
+
+            sqi_for_features = sqi_valid if include_sqi_features else None
+            features, feature_names = extract_all_features(
+                X_valid, fs, sqi_for_features, config=feature_config
+            )
 
             n_windows = features.shape[0]
             all_features.append(features)
@@ -497,8 +939,13 @@ def baseline_train(
         console.print(f"[red]Error:[/red] Unknown model type: {model_type}")
         raise typer.Exit(code=1)
 
+    task_type = TaskType.REGRESSION if target == "opencr" else TaskType.CLASSIFICATION
+    class_order = None
+    if task_type == TaskType.CLASSIFICATION:
+        class_order = np.unique(y_all)
+
     model_config = ModelConfig(
-        task_type=TaskType.CLASSIFICATION,
+        task_type=task_type,
         model_type=model_types[model_type],
         n_estimators=n_estimators,
         random_state=seed,
@@ -507,6 +954,31 @@ def baseline_train(
     # LOSO cross-validation
     fold_results = []
     fold_metrics = []
+    ci_y_true = []
+    ci_y_pred = []
+    ci_y_proba = []
+    ci_subjects = []
+    has_proba = True
+    splits_info: list[dict[str, object]] = []
+    subject_coverage = {}
+    for sid, counts in subject_counts.items():
+        total = counts.get("total") or 0
+        if total == 0:
+            subject_coverage[sid] = 0.0
+            continue
+        if not gating_enabled:
+            subject_coverage[sid] = 1.0
+            continue
+        if effective_scope == "ppg":
+            valid = counts.get("ppg")
+        elif effective_scope == "bioz":
+            valid = counts.get("bioz")
+        else:
+            valid = counts.get("min")
+        if valid is None:
+            subject_coverage[sid] = 1.0
+        else:
+            subject_coverage[sid] = float(valid) / float(total)
 
     for fold in loso_split(subjects_arr):
         console.print(f"  Fold {fold.fold_idx + 1}: test={fold.test_subject}")
@@ -523,12 +995,25 @@ def baseline_train(
         # Predict
         y_pred = model.predict(X_test)
         y_proba = model.predict_proba(X_test)
+        y_proba_aligned = y_proba
+        if task_type == TaskType.CLASSIFICATION and y_proba is not None and class_order is not None:
+            classes = getattr(model.model, "classes_", None)
+            if classes is not None:
+                y_proba_aligned = align_proba_to_classes(y_proba, classes, class_order)
 
         # Compute metrics
-        metrics = compute_classification_metrics(y_test, y_pred, y_proba)
+        if task_type == TaskType.REGRESSION:
+            metrics = compute_regression_metrics(y_test, y_pred)
+            y_proba_aligned = None
+        else:
+            metrics = compute_classification_metrics(
+                y_test,
+                y_pred,
+                y_proba_aligned,
+                class_order=class_order,
+            )
         fold_metrics.append(metrics)
 
-        # Save fold results
         fold_dir = output_dir / f"fold_{fold.fold_idx:02d}"
         fold_dir.mkdir(parents=True, exist_ok=True)
 
@@ -538,8 +1023,18 @@ def baseline_train(
             fold_dir / "predictions.npz",
             y_true=y_test,
             y_pred=y_pred,
-            y_proba=y_proba if y_proba is not None else np.array([]),
+            y_proba=y_proba_aligned if y_proba_aligned is not None else np.array([]),
+            class_order=class_order if class_order is not None else np.array([]),
         )
+
+        ci_y_true.append(y_test)
+        ci_y_pred.append(y_pred)
+        ci_subjects.append(np.array([fold.test_subject] * len(y_test)))
+        if task_type == TaskType.CLASSIFICATION:
+            if y_proba_aligned is None or len(y_proba_aligned) == 0:
+                has_proba = False
+            else:
+                ci_y_proba.append(y_proba_aligned)
 
         fold_results.append(
             {
@@ -547,58 +1042,174 @@ def baseline_train(
                 "test_subject": fold.test_subject,
                 "n_train": len(X_train),
                 "n_test": len(X_test),
+                "coverage": subject_coverage.get(fold.test_subject),
                 "metrics": metrics.to_dict(),
+            }
+        )
+        splits_info.append(
+            {
+                "fold_idx": fold.fold_idx,
+                "test_subject": fold.test_subject,
+                "train_subjects": fold.train_subjects,
             }
         )
 
     # Aggregate metrics
     aggregated = aggregate_fold_metrics(fold_metrics)
 
-    # Save overall results
+    metrics_ci = {}
+    if n_boot > 0:
+        y_true_all = np.concatenate(ci_y_true)
+        y_pred_all = np.concatenate(ci_y_pred)
+        subject_ids_all = np.concatenate(ci_subjects)
+        y_proba_all = None
+        if task_type == TaskType.CLASSIFICATION and has_proba and ci_y_proba:
+            y_proba_all = np.vstack(ci_y_proba)
+
+        _, metrics_ci = compute_metrics_with_ci(
+            y_true_all,
+            y_pred_all,
+            y_proba_all,
+            subject_ids_all,
+            task_type.value,
+            n_boot=n_boot,
+            seed=seed,
+            class_order=class_order,
+        )
+
+    coverage_by_mask = {}
+    if total_windows > 0:
+        coverage_by_mask["min"] = total_valid_min / total_windows
+        if has_ppg_mask:
+            coverage_by_mask["ppg"] = total_valid_ppg / total_windows
+        if has_bioz_mask:
+            coverage_by_mask["bioz"] = total_valid_bioz / total_windows
+
     results = {
         "model_type": model_type,
         "cv_strategy": cv,
+        "target": target,
+        "task_type": task_type.value,
+        "target_direction": target_direction,
+        "ordinal_bins": ordinal_bins,
+        "coverage": (total_valid / total_windows) if total_windows > 0 else 0.0,
+        "coverage_by_mask": coverage_by_mask,
+        "ablation": {
+            "use_ppg": use_ppg,
+            "use_bioz": use_bioz,
+            "use_sqi_gating": use_sqi_gating,
+            "include_sqi_features": include_sqi_features,
+            "sqi_gating_scope": sqi_gating_scope,
+            "sqi_gating_scope_effective": effective_scope,
+        },
         "n_subjects": len(subject_ids),
         "n_samples": len(X_all),
         "n_features": X_all.shape[1],
         "feature_names": feature_names,
+        "class_order": class_order.tolist() if class_order is not None else None,
         "folds": fold_results,
         "aggregated_metrics": aggregated,
+        "metrics_ci": metrics_ci,
+        "bootstrap": {"n_boot": n_boot, "seed": seed},
     }
 
     with open(output_dir / "results.json", "w") as f:
         json.dump(results, f, indent=2)
 
-    # Create results.csv
+    splits_path = output_dir / "splits.json"
+    with open(splits_path, "w", encoding="utf-8") as f:
+        json.dump(splits_info, f, indent=2)
+
+    manifest = build_manifest(
+        stage="baseline_train",
+        seed=seed,
+        command_args=sys.argv,
+        data_card_path=data_card,
+        dataset_hash=dataset_hash,
+        config={
+            "preprocess": preprocess_config or {},
+            "features": asdict(feature_config),
+            "model": asdict(model_config),
+            "cv": {"strategy": cv, "n_folds": len(fold_results)},
+            "ablation": {
+                "use_ppg": use_ppg,
+                "use_bioz": use_bioz,
+                "use_sqi_gating": use_sqi_gating,
+                "include_sqi_features": include_sqi_features,
+                "sqi_gating_scope": sqi_gating_scope,
+                "sqi_gating_scope_effective": effective_scope,
+            },
+        },
+        splits=splits_info,
+        artifacts={
+            "results_path": str(output_dir / "results.json"),
+            "results_csv": str(output_dir / "results.csv"),
+            "splits_path": str(splits_path),
+            "run_dir": str(output_dir),
+        },
+        extra={"target": target, "task_type": task_type.value},
+    )
+    write_manifest(output_dir / "manifest.json", manifest)
+
     import csv
 
     csv_path = output_dir / "results.csv"
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["fold", "subject", "accuracy", "f1", "auc_roc"])
-        for fr in fold_results:
-            writer.writerow(
-                [
-                    fr["fold_idx"],
-                    fr["test_subject"],
-                    f"{fr['metrics']['accuracy']:.4f}",
-                    f"{fr['metrics']['f1']:.4f}",
-                    f"{fr['metrics']['auc_roc']:.4f}" if fr["metrics"]["auc_roc"] else "N/A",
-                ]
-            )
+        if task_type == TaskType.REGRESSION:
+            writer.writerow(["fold", "subject", "rmse", "mae", "r2"])
+            for fr in fold_results:
+                writer.writerow(
+                    [
+                        fr["fold_idx"],
+                        fr["test_subject"],
+                        f"{fr['metrics']['rmse']:.4f}",
+                        f"{fr['metrics']['mae']:.4f}",
+                        f"{fr['metrics']['r2']:.4f}",
+                    ]
+                )
+        else:
+            writer.writerow(["fold", "subject", "accuracy", "f1", "auc_roc"])
+            for fr in fold_results:
+                writer.writerow(
+                    [
+                        fr["fold_idx"],
+                        fr["test_subject"],
+                        f"{fr['metrics']['accuracy']:.4f}",
+                        f"{fr['metrics']['f1']:.4f}",
+                        f"{fr['metrics']['auc_roc']:.4f}" if fr["metrics"]["auc_roc"] else "N/A",
+                    ]
+                )
 
-    console.print(
-        Panel(
-            f"[green]Training Complete![/green]\\n\\n"
-            f"Subjects: {len(subject_ids)}\\n"
-            f"Folds: {len(fold_results)}\\n"
-            f"Mean Accuracy: {aggregated.get('accuracy', {}).get('mean', 0):.4f} "
-            f"(+/- {aggregated.get('accuracy', {}).get('std', 0):.4f})\\n"
-            f"Mean F1: {aggregated.get('f1', {}).get('mean', 0):.4f}\\n\\n"
-            f"Output: [cyan]{output_dir}[/cyan]",
-            title="[green]Training Complete[/green]",
+    if task_type == TaskType.REGRESSION:
+        mean_rmse = aggregated.get("rmse", {}).get("mean", 0)
+        mean_mae = aggregated.get("mae", {}).get("mean", 0)
+        console.print(
+            Panel(
+                f"[green]Training Complete![/green]\\n\\n"
+                f"Subjects: {len(subject_ids)}\\n"
+                f"Folds: {len(fold_results)}\\n"
+                f"Mean RMSE: {mean_rmse:.4f}\\n"
+                f"Mean MAE: {mean_mae:.4f}\\n\\n"
+                f"Coverage: {results['coverage']:.1%}\\n\\n"
+                f"Output: [cyan]{output_dir}[/cyan]",
+                title="[green]Training Complete[/green]",
+            )
         )
-    )
+    else:
+        console.print(
+            Panel(
+                f"[green]Training Complete![/green]\\n\\n"
+                f"Subjects: {len(subject_ids)}\\n"
+                f"Folds: {len(fold_results)}\\n"
+                f"Mean Accuracy: {aggregated.get('accuracy', {}).get('mean', 0):.4f} "
+                f"(+/- {aggregated.get('accuracy', {}).get('std', 0):.4f})\\n"
+                f"Mean F1: {aggregated.get('f1', {}).get('mean', 0):.4f}\\n\\n"
+                f"Coverage: {results['coverage']:.1%}\\n\\n"
+                f"Output: [cyan]{output_dir}[/cyan]",
+                title="[green]Training Complete[/green]",
+            )
+        )
 
 
 @baseline_app.command("evaluate")
@@ -640,32 +1251,50 @@ def baseline_evaluate(
 
     aggregated = results.get("aggregated_metrics", {})
     folds = results.get("folds", [])
+    task_type = results.get("task_type", "classification")
+    target = results.get("target", "unknown")
+    metrics_ci = results.get("metrics_ci", {})
 
     # Display results
+    console.print(f"\\n[bold]Target:[/bold] {target} ({task_type})")
     console.print("\\n[bold]Per-Fold Results:[/bold]")
-    for fold in folds:
-        m = fold["metrics"]
-        auc_str = f"{m['auc_roc']:.3f}" if m["auc_roc"] else "N/A"
-        console.print(
-            f"  Fold {fold['fold_idx']:2d} ({fold['test_subject']:>10s}): "
-            f"Acc={m['accuracy']:.3f}, F1={m['f1']:.3f}, "
-            f"AUC={auc_str}"
-        )
+    if task_type == "regression":
+        for fold in folds:
+            m = fold["metrics"]
+            console.print(
+                f"  Fold {fold['fold_idx']:2d} ({fold['test_subject']:>10s}): "
+                f"RMSE={m['rmse']:.3f}, MAE={m['mae']:.3f}, R2={m['r2']:.3f}"
+            )
+    else:
+        for fold in folds:
+            m = fold["metrics"]
+            auc_str = f"{m['auc_roc']:.3f}" if m["auc_roc"] else "N/A"
+            console.print(
+                f"  Fold {fold['fold_idx']:2d} ({fold['test_subject']:>10s}): "
+                f"Acc={m['accuracy']:.3f}, F1={m['f1']:.3f}, "
+                f"AUC={auc_str}"
+            )
 
     console.print("\\n[bold]Aggregated Metrics:[/bold]")
     for metric, stats in aggregated.items():
         if isinstance(stats, dict) and "mean" in stats:
+            ci = metrics_ci.get(metric)
+            ci_str = ""
+            if ci:
+                ci_str = f" CI95 [{ci['low']:.4f}, {ci['high']:.4f}]"
             console.print(
                 f"  {metric}: {stats['mean']:.4f} (+/- {stats['std']:.4f}) "
-                f"[{stats['min']:.4f}, {stats['max']:.4f}]"
+                f"[{stats['min']:.4f}, {stats['max']:.4f}]{ci_str}"
             )
 
-    # Save summary
     out_path = output_file or (run_dir / "summary.json")
     summary = {
         "n_folds": len(folds),
         "n_subjects": results.get("n_subjects"),
+        "target": target,
+        "task_type": task_type,
         "aggregated_metrics": aggregated,
+        "metrics_ci": metrics_ci,
     }
 
     with open(out_path, "w") as f:
@@ -705,7 +1334,11 @@ def report_annex_a(
     Example:
       opencr report annexA runs/baseline --output docs
     """
-    from opencr.report.annexA import generate_annex_a
+    import sys
+    from dataclasses import asdict
+
+    from opencr.report.annexA import AnnexAConfig, generate_annex_a
+    from opencr.repro.manifest import build_manifest, load_manifest, write_manifest
 
     setup_logging()
     logger.info(f"Generating Annex A report: {run_dir}")
@@ -726,14 +1359,36 @@ def report_annex_a(
         )
     )
 
+    config = AnnexAConfig()
     try:
-        result = generate_annex_a(run_dir, output_dir)
+        result = generate_annex_a(run_dir, output_dir, config=config)
     except Exception as e:
         console.print(f"[red]Error during report generation:[/red] {e}")
         raise typer.Exit(code=1) from e
 
     tables = result.get("tables", [])
     figures = result.get("figures", [])
+    baseline_manifest = load_manifest(run_dir / "manifest.json")
+    dataset_hash = None
+    data_card_path = None
+    seed = None
+    if baseline_manifest:
+        dataset_hash = baseline_manifest.get("dataset_hash")
+        data_card_value = baseline_manifest.get("data_card_path")
+        if data_card_value:
+            data_card_path = Path(data_card_value)
+        seed = baseline_manifest.get("seed")
+
+    manifest = build_manifest(
+        stage="report_annexA",
+        seed=seed,
+        command_args=sys.argv,
+        data_card_path=data_card_path,
+        dataset_hash=dataset_hash,
+        config={"annexA": asdict(config), "source_run": str(run_dir)},
+        artifacts={"tables": tables, "figures": figures, "output_dir": str(output_dir)},
+    )
+    write_manifest(output_dir / "manifest.json", manifest)
 
     console.print(
         Panel(
@@ -758,31 +1413,60 @@ def report_metrics(
         Path("docs/metrics.json"),
         "--output",
         "-o",
-        help="Output path for metrics JSON",
+        help="Output path for metrics JSON or directory for tables",
     ),
 ) -> None:
     """
-    Export evaluation metrics to JSON.
+    Export evaluation metrics and summary tables.
 
-    Creates a structured JSON file with all computed metrics.
+    Generates summary.csv and summary.md from results.json and
+    saves a metrics.json snapshot.
 
     \b
     Example:
       opencr report metrics runs/eval --output docs/metrics.json
     """
+    import json
+
+    from opencr.report.metrics import generate_metrics_summary
+
     setup_logging()
     logger.info(f"Exporting metrics: {results_dir}")
 
     _validate_dir_exists(results_dir, "Results directory")
-    _ensure_dir(output_path.parent)
+    output_path = Path(output_path)
+    output_dir = output_path if output_path.suffix == "" else output_path.parent
+    _ensure_dir(output_dir)
+    json_path = output_path if output_path.suffix else output_dir / "metrics.json"
+
+    result = generate_metrics_summary(results_dir, output_dir)
+
+    results_path = results_dir / "results.json"
+    with open(results_path, encoding="utf-8") as f:
+        results = json.load(f)
+
+    metrics_payload = {
+        "target": results.get("target", "unknown"),
+        "task_type": results.get("task_type", "unknown"),
+        "n_folds": len(results.get("folds", [])),
+        "aggregated_metrics": results.get("aggregated_metrics", {}),
+        "metrics_ci": results.get("metrics_ci", {}),
+        "source_results": str(results_path),
+    }
+
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(metrics_payload, f, indent=2)
+
+    message = f"""[yellow]Metrics Export[/yellow]
+
+Results: [cyan]{results_dir}[/cyan]
+JSON: [cyan]{json_path}[/cyan]
+Tables: [cyan]{', '.join(result['tables'])}[/cyan]"""
 
     console.print(
         Panel(
-            f"[yellow]Metrics Export[/yellow]\n\n"
-            f"Results: [cyan]{results_dir}[/cyan]\n"
-            f"Output: [cyan]{output_path}[/cyan]\n\n"
-            f"[dim]Not implemented yet[/dim]",
-            title="📈 Metrics",
+            message,
+            title="Metrics Export",
         )
     )
 
@@ -841,6 +1525,13 @@ def edge_export(
     logger.info(f"Exporting edge model from: {run_dir}")
 
     _validate_dir_exists(run_dir, "Run directory")
+    if quantize:
+        console.print(
+            "[red]Error:[/red] Quantization (int8) is only supported for future "
+            "TFLite/Keras models; baseline sklearn exports do not apply. "
+            "Remove --quantize."
+        )
+        raise typer.Exit(code=1)
 
     config = EdgeConfig(
         target_format=format,
@@ -862,14 +1553,33 @@ def edge_export(
     manifest = result["manifest_path"]
 
     # Display summary
+    meets_budget = budget.get("meets_budget")
+    if meets_budget is True:
+        overall_status = "OK"
+    elif meets_budget is False:
+        overall_status = "FAIL"
+    else:
+        overall_status = "UNKNOWN"
+
+    latency_status = str(budget.get("latency", {}).get("status", "unknown")).upper()
+    flash_status = str(budget.get("flash", {}).get("status", "unknown")).upper()
+    ram_status = str(budget.get("ram", {}).get("status", "unknown")).upper()
+
+    flash_kb = budget.get("flash", {}).get("kb")
+    flash_str = f"{flash_kb} KB" if flash_kb is not None else "unknown"
+    ram_kb = budget.get("ram", {}).get("estimated_kb")
+    ram_str = f"{ram_kb} KB" if ram_kb is not None else "unknown"
+
     console.print(
         Panel(
             f"[bold green]Export Complete![/bold green]\\n\\n"
             f"Format: [cyan]{result['format']}[/cyan]\\n"
             f"Path: [cyan]{result['edge_model_path']}[/cyan]\\n"
             f"Size: {budget['model_size']['kb']} KB\\n"
-            f"Latency Est: {budget['latency']['estimated_ms']} ms "
-            f"({'OK' if budget['latency']['meets_budget'] else 'WARNING'})\\n\\n"
+            f"Latency Est: {budget['latency']['estimated_ms']} ms ({latency_status})\\n"
+            f"Flash: {flash_str} ({flash_status})\\n"
+            f"RAM: {ram_str} ({ram_status})\\n"
+            f"Budget: {overall_status}\\n\\n"
             f"Manifest: {manifest}",
             title="Edge Artifacts",
         )
@@ -883,12 +1593,18 @@ def edge_export(
 
 @edge_app.command("benchmark")
 def edge_benchmark(
-    model_path: Path = typer.Argument(
-        ...,
-        help="Path to ONNX model",
+    model_path: Path | None = typer.Argument(
+        None,
+        help="Path to ONNX or sklearn model artifact",
+    ),
+    run_dir: Path | None = typer.Option(
+        None,
+        "--run",
+        help="Baseline run directory (used to locate exported edge artifact)",
     ),
     output_path: Path = typer.Option(
         Path("docs/benchmark.json"),
+        "--out",
         "--output",
         "-o",
         help="Output path for benchmark results",
@@ -914,17 +1630,18 @@ def edge_benchmark(
     """
     Run inference benchmark on edge model.
 
-    Measures latency, throughput, and memory usage.
+    Measures host-side inference latency and artifact size.
 
     \b
     Example:
       opencr edge benchmark models/model.onnx --iterations 1000 --device cpu
+      opencr edge benchmark --run runs/demo/baseline --out runs/demo/edge
     """
-    setup_logging()
-    logger.info(f"Running benchmark: {model_path}")
+    import json
 
-    _validate_file_exists(model_path, "ONNX model")
-    _ensure_dir(output_path.parent)
+    from opencr.edge.benchmark import benchmark_edge_model, write_benchmark_tables
+
+    setup_logging()
 
     if iterations <= 0:
         console.print(f"[red]Error:[/red] iterations must be positive, got {iterations}")
@@ -934,16 +1651,69 @@ def edge_benchmark(
         console.print(f"[red]Error:[/red] warmup must be non-negative, got {warmup}")
         raise typer.Exit(code=1)
 
+    output_path = Path(output_path)
+    output_dir = output_path if output_path.suffix == "" else output_path.parent
+    _ensure_dir(output_dir)
+    json_path = output_path if output_path.suffix else output_dir / "benchmark.json"
+
+    if model_path is None:
+        if run_dir is None:
+            console.print("[red]Error:[/red] Provide MODEL_PATH or use --run to locate an export.")
+            raise typer.Exit(code=1)
+        run_dir = Path(run_dir)
+        candidates = [
+            output_dir / "model.onnx",
+            output_dir / "model_stub.joblib",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                model_path = candidate
+                break
+        if model_path is None:
+            for fold_dir in sorted(run_dir.glob("fold_*")):
+                candidate = fold_dir / "model.joblib"
+                if candidate.exists():
+                    model_path = candidate
+                    break
+        if model_path is None:
+            console.print("[red]Error:[/red] No model artifact found in output dir or run dir.")
+            raise typer.Exit(code=1)
+
+    model_path = Path(model_path)
+    logger.info(f"Running benchmark: {model_path}")
+
+    _validate_file_exists(model_path, "Model file")
+
+    benchmark = benchmark_edge_model(
+        model_path,
+        iterations=iterations,
+        warmup=warmup,
+        device=device,
+    )
+
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(benchmark, f, indent=2)
+
+    table_paths = write_benchmark_tables(output_dir, benchmark)
+
+    status = benchmark.get("inference", {}).get("status", "unknown")
+    summary = benchmark.get("inference", {}).get("summary") or {}
+
+    message = f"""[yellow]Edge Benchmark[/yellow]
+
+Model: [cyan]{model_path}[/cyan]
+Device: {device}
+Iterations: {iterations}
+Warmup: {warmup}
+Status: {status}
+Mean: {summary.get('mean_ms', 'N/A')} ms
+Output: [cyan]{json_path}[/cyan]
+Summary: [cyan]{table_paths['csv']}[/cyan]"""
+
     console.print(
         Panel(
-            f"[yellow]Edge Benchmark[/yellow]\n\n"
-            f"Model: [cyan]{model_path}[/cyan]\n"
-            f"Device: {device}\n"
-            f"Iterations: {iterations}\n"
-            f"Warmup: {warmup}\n"
-            f"Output: [cyan]{output_path}[/cyan]\n\n"
-            f"[dim]Not implemented yet[/dim]",
-            title="⚡ Benchmark",
+            message,
+            title="Edge Benchmark",
         )
     )
 
@@ -971,6 +1741,11 @@ def demo_run(
         "-d",
         help="Delay between updates in milliseconds",
     ),
+    ascii: bool | None = typer.Option(
+        None,
+        "--ascii/--no-ascii",
+        help="Force ASCII output (auto-detect if not set).",
+    ),
 ) -> None:
     """
     Run live fuel gauge demo.
@@ -992,7 +1767,7 @@ def demo_run(
         console.print(f"[red]Error:[/red] delay must be positive, got {delay}")
         raise typer.Exit(code=1)
 
-    config = DemoConfig(delay_ms=delay)
+    config = DemoConfig(delay_ms=delay, ascii_only=ascii)
     run_demo(run_dir, subject, config)
 
 
@@ -1009,6 +1784,11 @@ def demo_fuel_gauge(
         "--duration",
         "-d",
         help="Demo duration in seconds",
+    ),
+    ascii: bool | None = typer.Option(
+        None,
+        "--ascii/--no-ascii",
+        help="Force ASCII output (auto-detect if not set).",
     ),
 ) -> None:
     """
@@ -1034,7 +1814,7 @@ def demo_fuel_gauge(
         console.print(f"[red]Error:[/red] duration must be positive, got {duration}")
         raise typer.Exit(code=1)
 
-    run_fuel_gauge_demo(threshold, duration)
+    run_fuel_gauge_demo(threshold, duration, ascii_only=ascii)
 
 
 # Entry point for `python -m opencr`

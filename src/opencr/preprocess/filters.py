@@ -25,7 +25,7 @@ def bandpass_filter(
     Apply a zero-phase Butterworth bandpass filter.
 
     Args:
-        signal: Input signal array, shape (N,) or (N, channels).
+        signal: Input signal array, shape (N,).
         fs: Sampling frequency in Hz.
         low_hz: Lower cutoff frequency in Hz.
         high_hz: Upper cutoff frequency in Hz.
@@ -66,7 +66,7 @@ def highpass_filter(
     Apply a zero-phase Butterworth highpass filter.
 
     Args:
-        signal: Input signal array, shape (N,) or (N, channels).
+        signal: Input signal array, shape (N,).
         fs: Sampling frequency in Hz.
         cutoff_hz: Cutoff frequency in Hz.
         order: Filter order (default: 4).
@@ -99,7 +99,7 @@ def lowpass_filter(
     Apply a zero-phase Butterworth lowpass filter.
 
     Args:
-        signal: Input signal array, shape (N,) or (N, channels).
+        signal: Input signal array, shape (N,).
         fs: Sampling frequency in Hz.
         cutoff_hz: Cutoff frequency in Hz.
         order: Filter order (default: 4).
@@ -131,7 +131,7 @@ def resample_signal(
     Resample signal to target sampling rate.
 
     Args:
-        signal: Input signal array, shape (N,) or (N, channels).
+        signal: Input signal array, shape (N,).
         fs_original: Original sampling frequency in Hz.
         fs_target: Target sampling frequency in Hz.
 

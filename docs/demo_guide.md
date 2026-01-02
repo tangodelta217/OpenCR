@@ -11,7 +11,7 @@ The demo module provides a live terminal visualization of the baseline model pre
 opencr demo run runs/baseline --subject S01 --delay 300
 
 # Run a quick simulated demo
-opencr demo fuel-gauge --threshold 0.7 --duration 10
+opencr demo fuel-gauge --threshold 0.7 --duration 10 --ascii
 ```
 
 ### Recording a GIF/Video
@@ -62,22 +62,24 @@ asciinema upload demo.cast
 The demo displays:
 
 ```
-╭─────── OpenCR Live Demo ───────╮
-│ Subject:    S01                │
-│ Sample:     15/30              │
-│                                │
-│ True:       2                  │
-│ Predicted:  2  ✓               │
-│                                │
-│ Accuracy:   80.0%              │
-│                                │
-│ FUEL GAUGE                     │
-│ ████████████████░░░░  80.0%    │
-│                                │
-│ Trend: ↑ Improving             │
-│ Status: HIGH CONFIDENCE        │
-╰────────────────────────────────╯
++----------------------------------------+
+| OpenCR Live Demo                       |
+| Subject:    S01                        |
+| Sample:     15/30                      |
+|                                        |
+| True:       2                          |
+| Predicted:  2  o                       |
+|                                        |
+| Accuracy:   80.0%                      |
+|                                        |
+| FUEL GAUGE                             |
+| [##########----------]  80.0%          |
+|                                        |
+| Trend: Improving                       |
+| Status: HIGH CONFIDENCE                |
++----------------------------------------+
 ```
+
 
 ### Tips for Great Demo Videos
 

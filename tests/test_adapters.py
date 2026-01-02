@@ -73,6 +73,44 @@ def minimal_dataset(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.fixture
+def mixed_steps_dataset(tmp_path: Path) -> Path:
+    """Create a dataset with mixed protocol level availability."""
+    fs_ppg = 100.0
+    fs_bioz = 50.0
+    duration = 10  # seconds
+
+    for subject_id, include_steps in [
+        ("subject001", True),
+        ("subject002", True),
+        ("subject003", False),
+    ]:
+        t_ppg = np.arange(int(fs_ppg * duration)) / fs_ppg
+        t_bioz = np.arange(int(fs_bioz * duration)) / fs_bioz
+
+        ppg = np.sin(2 * np.pi * 1.2 * t_ppg) + np.random.normal(0, 0.1, len(t_ppg))
+        bioz = np.sin(2 * np.pi * 0.3 * t_bioz) + np.random.normal(0, 0.05, len(t_bioz))
+
+        payload = {
+            "ppg": ppg,
+            "bioz": bioz,
+            "fs_ppg": fs_ppg,
+            "fs_bioz": fs_bioz,
+            "t": t_ppg,
+            "metadata": {"subject_id": subject_id, "age": 25},
+        }
+
+        if include_steps:
+            step = np.repeat([1, 2, 3, 4], len(t_ppg) // 4)
+            if len(step) < len(t_ppg):
+                step = np.concatenate([step, np.full(len(t_ppg) - len(step), 4)])
+            payload["step"] = step
+
+        np.savez(tmp_path / f"{subject_id}.npz", **payload)
+
+    return tmp_path
+
+
 class TestLocalNpzAdapter:
     """Tests for LocalNpzAdapter."""
 
@@ -98,6 +136,27 @@ class TestLocalNpzAdapter:
         assert data.sampling_rates["bioz"] == 50.0
         assert data.protocol_levels is not None
         assert len(data.protocol_levels) == 1000  # 10s * 100Hz
+
+    def test_load_subject_single_channel_2d(self, tmp_path: Path) -> None:
+        """Accept single-channel signals with shape (1, N)."""
+        fs = 100.0
+        n_samples = 200
+        ppg = np.random.randn(1, n_samples)
+        bioz = np.random.randn(1, n_samples)
+
+        np.savez(
+            tmp_path / "subject001.npz",
+            ppg=ppg,
+            bioz=bioz,
+            fs_ppg=fs,
+            fs_bioz=fs,
+        )
+
+        adapter = LocalNpzAdapter(tmp_path)
+        data = adapter.load_subject("subject001")
+
+        assert data.signals["ppg"].shape == (n_samples,)
+        assert data.signals["bioz"].shape == (n_samples,)
 
     def test_load_subject_not_found(self, synthetic_dataset: Path) -> None:
         """Test loading a non-existent subject."""
@@ -125,6 +184,18 @@ class TestLocalNpzAdapter:
         assert "ppg" in card.signals
         assert "bioz" in card.signals
         assert card.has_protocol_levels is True
+        assert set(card.subjects_with_steps) == {"subject001", "subject002"}
+        assert card.subjects_missing_steps == []
+
+    def test_describe_mixed_steps(self, mixed_steps_dataset: Path) -> None:
+        """Test data card captures mixed protocol availability."""
+        adapter = LocalNpzAdapter(mixed_steps_dataset)
+        card = adapter.describe()
+
+        assert card.num_subjects == 3
+        assert card.has_protocol_levels is True
+        assert set(card.subjects_with_steps) == {"subject001", "subject002"}
+        assert card.subjects_missing_steps == ["subject003"]
 
     def test_validate(self, synthetic_dataset: Path) -> None:
         """Test dataset validation."""
@@ -175,6 +246,25 @@ class TestAdapterErrors:
         with pytest.raises(ValueError, match="missing required fields"):
             adapter.load_subject("subject001")
 
+    def test_multichannel_rejected(self, tmp_path: Path) -> None:
+        """Test error when signals have multiple channels."""
+        fs = 100.0
+        n_samples = 200
+        ppg = np.random.randn(2, n_samples)
+        bioz = np.random.randn(n_samples)
+
+        np.savez(
+            tmp_path / "subject001.npz",
+            ppg=ppg,
+            bioz=bioz,
+            fs_ppg=fs,
+            fs_bioz=fs,
+        )
+
+        adapter = LocalNpzAdapter(tmp_path)
+        with pytest.raises(ValueError, match="Multichannel not supported"):
+            adapter.load_subject("subject001")
+
 
 class TestDataFetchCLI:
     """Tests for the CLI data fetch command."""
@@ -208,6 +298,8 @@ class TestDataFetchCLI:
         assert card["num_subjects"] == 2
         assert "ppg" in card["signals"]
         assert card["adapter_type"] == "LocalNpzAdapter"
+        assert card["subjects_with_steps"] == ["subject001", "subject002"]
+        assert card["subjects_missing_steps"] == []
 
     def test_fetch_invalid_directory(self, tmp_path: Path) -> None:
         """Test fetch with invalid directory."""

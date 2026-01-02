@@ -37,9 +37,7 @@ class WindowConfig:
 class WindowResult:
     """Result of windowing operation."""
 
-    windows: NDArray[
-        np.floating
-    ]  # Shape: (n_windows, window_samples) or (n_windows, window_samples, channels)
+    windows: NDArray[np.floating]  # Shape: (n_windows, window_samples)
     timestamps: NDArray[np.floating]  # Start time of each window
     n_windows: int
     window_samples: int
@@ -56,7 +54,7 @@ def segment_windows(
     Segment signal into overlapping windows.
 
     Args:
-        signal: Input signal, shape (N,) or (N, channels).
+        signal: Input signal, shape (N,).
         fs: Sampling frequency in Hz.
         config: Windowing configuration.
         labels: Optional labels aligned with signal, shape (N,).
@@ -74,7 +72,6 @@ def segment_windows(
     n_samples = signal.shape[0]
     is_multichannel = signal.ndim > 1
 
-    # Calculate number of windows
     if n_samples < window_samples:
         raise ValueError(
             f"Signal too short ({n_samples} samples) for window size "
@@ -91,7 +88,6 @@ def segment_windows(
         f"(window={window_samples}, stride={stride_samples})"
     )
 
-    # Pre-allocate output array
     if is_multichannel:
         n_channels = signal.shape[1]
         windows = np.zeros((n_windows, window_samples, n_channels), dtype=signal.dtype)
@@ -104,7 +100,6 @@ def segment_windows(
     if labels is not None:
         window_labels = np.zeros(n_windows, dtype=labels.dtype)
 
-    # Extract windows
     for i in range(n_windows):
         start = i * stride_samples
         end = start + window_samples
@@ -112,7 +107,6 @@ def segment_windows(
         timestamps[i] = start / fs
 
         if labels is not None and window_labels is not None:
-            # Majority vote for label
             window_label_segment = labels[start:end]
             unique, counts = np.unique(window_label_segment, return_counts=True)
             window_labels[i] = unique[np.argmax(counts)]
