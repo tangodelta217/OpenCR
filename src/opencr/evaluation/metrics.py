@@ -105,12 +105,24 @@ def compute_classification_metrics(
     auc = None
     if y_proba is not None:
         try:
+            y_proba_arr = np.asarray(y_proba)
             if len(classes) == 2:
                 # Binary classification
-                auc = roc_auc_score(y_true, y_proba[:, 1])
+                pos_class = classes[-1]
+                y_binary = (y_true == pos_class).astype(int)
+                if y_proba_arr.ndim == 1:
+                    y_score = y_proba_arr
+                else:
+                    if y_proba_arr.shape[1] != len(classes):
+                        raise ValueError("y_proba shape does not match number of classes")
+                    pos_idx = int(np.where(classes == pos_class)[0][0])
+                    y_score = y_proba_arr[:, pos_idx]
+                auc = roc_auc_score(y_binary, y_score)
             else:
                 # Multi-class
-                auc = roc_auc_score(y_true, y_proba, multi_class="ovr", average="weighted")
+                if y_proba_arr.ndim != 2 or y_proba_arr.shape[1] != len(classes):
+                    raise ValueError("y_proba shape does not match number of classes")
+                auc = roc_auc_score(y_true, y_proba_arr, multi_class="ovr", average="macro")
         except Exception as e:
             logger.warning(f"Could not compute AUC: {e}")
             auc = None
@@ -201,3 +213,101 @@ def aggregate_fold_metrics(
             }
 
     return result
+
+
+def _bootstrap_subject_indices(
+    subject_ids: NDArray,
+    rng: np.random.Generator,
+) -> NDArray[np.intp]:
+    unique_subjects = np.unique(subject_ids)
+    if unique_subjects.size == 0:
+        return np.array([], dtype=np.intp)
+
+    subject_to_indices = {
+        subject: np.where(subject_ids == subject)[0] for subject in unique_subjects
+    }
+    sampled = rng.choice(unique_subjects, size=unique_subjects.size, replace=True)
+    return np.concatenate([subject_to_indices[subject] for subject in sampled])
+
+
+def compute_metrics_with_ci(
+    y_true: NDArray,
+    y_pred: NDArray,
+    y_proba: NDArray[np.floating] | None,
+    subject_ids: NDArray | list[str],
+    task_type: str,
+    *,
+    n_boot: int = 200,
+    seed: int = 42,
+) -> tuple[ClassificationMetrics | RegressionMetrics, dict[str, dict[str, float]]]:
+    """
+    Compute metrics and bootstrap confidence intervals by subject.
+
+    Args:
+        y_true: True labels/targets.
+        y_pred: Predicted labels/targets.
+        y_proba: Predicted probabilities (classification only).
+        subject_ids: Subject ID per window.
+        task_type: "classification" or "regression".
+        n_boot: Number of bootstrap resamples.
+        seed: RNG seed for reproducibility.
+
+    Returns:
+        Tuple of (metrics, ci_dict).
+    """
+    task = task_type.lower()
+    subject_ids_arr = np.asarray(subject_ids)
+
+    if len(y_true) != len(subject_ids_arr):
+        raise ValueError("subject_ids length must match y_true length")
+    if len(y_pred) != len(y_true):
+        raise ValueError("y_pred length must match y_true length")
+
+    if task == "regression":
+        metrics = compute_regression_metrics(y_true, y_pred)
+        metric_names = ["rmse", "mae", "r2"]
+    else:
+        metrics = compute_classification_metrics(y_true, y_pred, y_proba)
+        metric_names = ["accuracy", "f1", "auc_roc"]
+        if metrics.auc_roc is None:
+            metric_names = ["accuracy", "f1"]
+
+    if n_boot <= 0:
+        return metrics, {}
+
+    rng = np.random.default_rng(seed)
+    values: dict[str, list[float]] = {name: [] for name in metric_names}
+
+    for _ in range(n_boot):
+        indices = _bootstrap_subject_indices(subject_ids_arr, rng)
+        if indices.size == 0:
+            continue
+
+        if task == "regression":
+            boot_metrics = compute_regression_metrics(y_true[indices], y_pred[indices])
+        else:
+            if y_proba is None or len(y_proba) == 0:
+                boot_proba = None
+            else:
+                boot_proba = y_proba[indices]
+            boot_metrics = compute_classification_metrics(
+                y_true[indices], y_pred[indices], boot_proba
+            )
+
+        for name in metric_names:
+            value = getattr(boot_metrics, name)
+            if value is not None:
+                values[name].append(float(value))
+
+    ci = {}
+    for name, vals in values.items():
+        if not vals:
+            continue
+        arr = np.asarray(vals, dtype=np.float64)
+        ci[name] = {
+            "mean": float(np.mean(arr)),
+            "low": float(np.percentile(arr, 2.5)),
+            "high": float(np.percentile(arr, 97.5)),
+        }
+
+    return metrics, ci

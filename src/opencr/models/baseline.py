@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from opencr import __version__
 from opencr.logging import get_logger
 
 logger = get_logger(__name__)
@@ -197,30 +198,86 @@ class BaselineModel:
         return {f"feature_{i}": imp for i, imp in enumerate(importances)}
 
     def save(self, path: Path) -> None:
-        """Save model to file."""
+        """Save model artifacts to disk."""
+        import json
+
         import joblib
 
         path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        model_path = path if path.suffix else path / "model.joblib"
+        model_path.parent.mkdir(parents=True, exist_ok=True)
 
-        data = {
-            "model": self.model,
-            "config": self.config,
+        joblib.dump(self.model, model_path)
+
+        metadata = {
+            "opencr_version": __version__,
+            "task_type": self.config.task_type.value,
+            "model_type": self.config.model_type.value,
+            "n_estimators": self.config.n_estimators,
+            "max_depth": self.config.max_depth,
+            "random_state": self.config.random_state,
+            "n_jobs": self.config.n_jobs,
+            "extra_params": self.config.extra_params,
             "feature_names": self.feature_names,
         }
-        joblib.dump(data, path)
-        logger.info(f"Model saved to {path}")
+
+        metadata_path = model_path.parent / "metadata.json"
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+
+        if self.feature_names:
+            schema_path = model_path.parent / "feature_schema.json"
+            with open(schema_path, "w", encoding="utf-8") as f:
+                json.dump({"feature_names": self.feature_names}, f, indent=2)
+
+        logger.info(f"Model saved to {model_path}")
 
     @classmethod
     def load(cls, path: Path) -> "BaselineModel":
-        """Load model from file."""
+        """Load model artifacts from disk."""
+        import json
+
         import joblib
 
-        data = joblib.load(path)
+        path = Path(path)
+        model_path = path if path.is_file() else path / "model.joblib"
 
-        instance = cls(config=data["config"])
-        instance.model = data["model"]
-        instance.feature_names = data["feature_names"]
+        data = joblib.load(model_path)
+        if isinstance(data, dict) and "model" in data:
+            instance = cls(config=data.get("config", ModelConfig()))
+            instance.model = data["model"]
+            instance.feature_names = data.get("feature_names")
+            logger.info(f"Loaded legacy model bundle from {model_path}")
+            return instance
 
-        logger.info(f"Model loaded from {path}")
+        metadata_path = model_path.parent / "metadata.json"
+        feature_schema_path = model_path.parent / "feature_schema.json"
+        if metadata_path.exists():
+            with open(metadata_path, encoding="utf-8") as f:
+                metadata = json.load(f)
+            config = ModelConfig(
+                task_type=TaskType(metadata.get("task_type", TaskType.CLASSIFICATION.value)),
+                model_type=ModelType(metadata.get("model_type", ModelType.RANDOM_FOREST.value)),
+                n_estimators=metadata.get("n_estimators", 100),
+                max_depth=metadata.get("max_depth"),
+                random_state=metadata.get("random_state", 42),
+                n_jobs=metadata.get("n_jobs", -1),
+                extra_params=metadata.get("extra_params", {}),
+            )
+            feature_names = metadata.get("feature_names")
+        else:
+            logger.warning(f"metadata.json not found in {model_path.parent}")
+            config = ModelConfig()
+            feature_names = None
+
+        if feature_names is None and feature_schema_path.exists():
+            with open(feature_schema_path, encoding="utf-8") as f:
+                schema = json.load(f)
+            feature_names = schema.get("feature_names")
+
+        instance = cls(config=config)
+        instance.model = data
+        instance.feature_names = feature_names
+
+        logger.info(f"Model loaded from {model_path}")
         return instance

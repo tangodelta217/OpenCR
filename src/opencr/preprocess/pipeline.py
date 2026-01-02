@@ -14,9 +14,15 @@ from numpy.typing import NDArray
 
 from opencr.data.adapters.base import DatasetAdapter, SubjectData
 from opencr.logging import get_logger
-from opencr.preprocess.filters import bandpass_filter, resample_signal
+from opencr.preprocess.filters import (
+    bandpass_filter,
+    highpass_filter,
+    lowpass_filter,
+    resample_signal,
+)
 from opencr.preprocess.sqi import SQIConfig, compute_sqi_batch
 from opencr.preprocess.windowing import WindowConfig, WindowResult, segment_windows
+from opencr.targets.opencr import normalize_steps_to_opencr, steps_to_ordinal
 
 logger = get_logger(__name__)
 
@@ -36,10 +42,16 @@ class PreprocessingConfig:
     filter_low_hz: float | None = 0.5
     filter_high_hz: float | None = 4.0
     filter_order: int = 4
+    bioz_filter_low_hz: float | None = 0.05
+    bioz_filter_high_hz: float | None = None
 
     # SQI
     sqi_threshold: float = 0.5  # Quality gating threshold
     sqi_config: SQIConfig = field(default_factory=SQIConfig)
+
+    # Targets
+    target_direction: str = "auto"
+    ordinal_bins: int = 4
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -61,7 +73,10 @@ class ProcessedSubject:
 
     subject_id: str
     X: NDArray[np.floating]  # (n_windows, n_channels, window_samples)
-    y: NDArray | None  # Labels per window (if available)
+    y: NDArray | None  # Legacy labels per window (step-based)
+    y_step: NDArray | None  # Step labels per window
+    y_opencr: NDArray[np.floating] | None  # OpenCR target per window
+    y_ord: NDArray[np.int_] | None  # Ordinal target per window
     sqi: NDArray[np.floating]  # (n_windows, n_channels)
     valid_mask: NDArray[np.bool_]  # Windows passing SQI threshold
     timestamps: NDArray[np.floating]  # Start time of each window
@@ -97,6 +112,8 @@ class PreprocessingPipeline:
         self,
         signal: NDArray[np.floating],
         fs: float,
+        filter_low_hz: float | None,
+        filter_high_hz: float | None,
     ) -> tuple[NDArray[np.floating], float]:
         """
         Apply resampling and filtering to a single signal.
@@ -112,14 +129,23 @@ class PreprocessingPipeline:
             effective_fs = self.config.resample_hz
 
         # Apply bandpass filter if configured
-        if self.config.filter_low_hz is not None and self.config.filter_high_hz is not None:
-            signal = bandpass_filter(
-                signal,
-                effective_fs,
-                self.config.filter_low_hz,
-                self.config.filter_high_hz,
-                self.config.filter_order,
-            )
+        if filter_low_hz is not None or filter_high_hz is not None:
+            if filter_low_hz is None:
+                signal = lowpass_filter(
+                    signal, effective_fs, filter_high_hz, self.config.filter_order
+                )
+            elif filter_high_hz is None:
+                signal = highpass_filter(
+                    signal, effective_fs, filter_low_hz, self.config.filter_order
+                )
+            else:
+                signal = bandpass_filter(
+                    signal,
+                    effective_fs,
+                    filter_low_hz,
+                    filter_high_hz,
+                    self.config.filter_order,
+                )
 
         return signal, effective_fs
 
@@ -146,7 +172,15 @@ class PreprocessingPipeline:
         processed_signals: dict[str, NDArray[np.floating]] = {}
         for signal_name, signal in subject_data.signals.items():
             original_fs = subject_data.sampling_rates[signal_name]
-            processed, _ = self._preprocess_signal(signal, original_fs)
+            name_lower = signal_name.lower()
+            if name_lower == "bioz":
+                low_hz = self.config.bioz_filter_low_hz
+                high_hz = self.config.bioz_filter_high_hz
+            else:
+                low_hz = self.config.filter_low_hz
+                high_hz = self.config.filter_high_hz
+
+            processed, _ = self._preprocess_signal(signal, original_fs, low_hz, high_hz)
 
             # Ensure same length by resampling to target_fs if not already
             if self.config.resample_hz is None and original_fs != target_fs:
@@ -191,7 +225,7 @@ class PreprocessingPipeline:
             X[:, c, :] = channel_windows[ch_name].windows
 
         # Compute SQI per channel
-        sqi = compute_sqi_batch(X, target_fs, self.config.sqi_config)
+        sqi = compute_sqi_batch(X, target_fs, self.config.sqi_config, channel_names=channel_names)
 
         # Quality gating: window is valid if min(sqi across channels) >= threshold
         min_sqi_per_window = sqi.min(axis=1) if sqi.ndim > 1 else sqi
@@ -201,10 +235,24 @@ class PreprocessingPipeline:
             f"  Windows: {n_windows}, Valid: {valid_mask.sum()} ({valid_mask.mean()*100:.1f}%)"
         )
 
+        y_step = window_labels
+        y_opencr = None
+        y_ord = None
+        if y_step is not None:
+            y_opencr = normalize_steps_to_opencr(y_step, direction=self.config.target_direction)
+            y_ord = steps_to_ordinal(
+                y_step,
+                n_bins=self.config.ordinal_bins,
+                direction=self.config.target_direction,
+            )
+
         return ProcessedSubject(
             subject_id=subject_data.subject_id,
             X=X,
             y=window_labels,
+            y_step=y_step,
+            y_opencr=y_opencr,
+            y_ord=y_ord,
             sqi=sqi,
             valid_mask=valid_mask,
             timestamps=first_result.timestamps,
@@ -216,6 +264,8 @@ class PreprocessingPipeline:
                 "n_windows": n_windows,
                 "n_valid": int(valid_mask.sum()),
                 "sqi_threshold": self.config.sqi_threshold,
+                "target_direction": self.config.target_direction,
+                "ordinal_bins": self.config.ordinal_bins,
             },
         )
 
@@ -262,6 +312,9 @@ class PreprocessingPipeline:
                     output_path,
                     X=processed.X,
                     y=processed.y if processed.y is not None else np.array([]),
+                    y_step=processed.y_step if processed.y_step is not None else np.array([]),
+                    y_opencr=processed.y_opencr if processed.y_opencr is not None else np.array([]),
+                    y_ord=processed.y_ord if processed.y_ord is not None else np.array([]),
                     sqi=processed.sqi,
                     valid_mask=processed.valid_mask,
                     timestamps=processed.timestamps,

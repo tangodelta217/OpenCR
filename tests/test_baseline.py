@@ -22,6 +22,7 @@ from opencr.features.bioz import extract_bioz_features
 from opencr.features.fusion import extract_all_features
 from opencr.features.ppg import extract_ppg_features
 from opencr.models.baseline import BaselineModel, ModelConfig, ModelType, TaskType
+from opencr.targets.opencr import normalize_steps_to_opencr, steps_to_ordinal
 
 
 @pytest.fixture
@@ -50,14 +51,25 @@ def synthetic_preprocessed_dataset(tmp_path: Path) -> Path:
         valid_mask = np.ones(n_windows, dtype=bool)
         timestamps = np.arange(n_windows) * 30.0
 
+        y_opencr = normalize_steps_to_opencr(y, direction="auto")
+        y_ord = steps_to_ordinal(y, n_bins=4, direction="auto")
+
         np.savez(
             tmp_path / f"{subject_id}.npz",
             X=X,
             y=y,
+            y_step=y,
+            y_opencr=y_opencr,
+            y_ord=y_ord,
             sqi=sqi,
             valid_mask=valid_mask,
             timestamps=timestamps,
-            metadata={"fs": fs, "n_windows": n_windows},
+            metadata={
+                "fs": fs,
+                "n_windows": n_windows,
+                "target_direction": "auto",
+                "ordinal_bins": 4,
+            },
         )
 
     return tmp_path
@@ -198,18 +210,23 @@ class TestBaselineModel:
         """Test model serialization."""
         X = np.random.randn(50, 5)
         y = np.random.randint(0, 2, 50)
+        feature_names = [f"f{i}" for i in range(X.shape[1])]
 
         model = BaselineModel()
-        model.fit(X, y)
+        model.fit(X, y, feature_names=feature_names)
 
         model_path = tmp_path / "model.joblib"
         model.save(model_path)
+
+        assert (tmp_path / "metadata.json").exists()
+        assert (tmp_path / "feature_schema.json").exists()
 
         loaded = BaselineModel.load(model_path)
         y_pred_original = model.predict(X[:10])
         y_pred_loaded = loaded.predict(X[:10])
 
         np.testing.assert_array_equal(y_pred_original, y_pred_loaded)
+        assert loaded.feature_names == feature_names
 
 
 class TestBaselineCLI:
@@ -265,14 +282,24 @@ class TestBaselineCLI:
             assert result.returncode == 0, f"Train failed: {result.stderr}"
             assert (output_dir / "results.json").exists()
             assert (output_dir / "results.csv").exists()
+            assert (output_dir / "splits.json").exists()
+            assert (output_dir / "manifest.json").exists()
 
             # Verify results.json structure
             with open(output_dir / "results.json") as f:
                 results = json.load(f)
 
             assert results["n_subjects"] == 3
+            assert results["target"] == "opencr"
+            assert "coverage" in results
+            assert "metrics_ci" in results
             assert len(results["folds"]) == 3
             assert "aggregated_metrics" in results
+
+            with open(output_dir / "manifest.json", encoding="utf-8") as f:
+                manifest = json.load(f)
+            assert manifest["stage"] == "baseline_train"
+            assert len(manifest.get("splits", [])) == 3
 
             # Verify LOSO: each fold tests on one subject
             test_subjects = {f["test_subject"] for f in results["folds"]}

@@ -3,7 +3,7 @@ Edge Export Module.
 
 Exports trained models to edge-ready formats:
 - sklearn models -> ONNX (optional) or pickle stub
-- Future: TFLite with int8 quantization
+- Planned: TFLite export for deep models
 """
 
 import json
@@ -74,7 +74,7 @@ class EdgeBudget:
 class EdgeConfig:
     """Configuration for edge export."""
 
-    target_format: str = "auto"  # auto, onnx, pickle, tflite
+    target_format: str = "auto"  # auto, onnx, pickle (tflite planned)
     quantize: bool = False
     target_latency_ms: float = 100.0
     target_ram_kb: float = 512.0
@@ -98,6 +98,11 @@ def export_edge_model(
     """
     if config is None:
         config = EdgeConfig()
+    if config.quantize:
+        raise ValueError(
+            "Quantization (int8) is only supported for future TFLite/Keras models; "
+            "baseline sklearn exports do not apply. Remove --quantize."
+        )
 
     run_dir = Path(run_dir)
     output_dir = Path(output_dir)
@@ -125,27 +130,22 @@ def export_edge_model(
     if model_path is None:
         raise FileNotFoundError(f"No model.joblib found in {run_dir}")
 
-    # Load the model
-    import joblib
+    from opencr.models.baseline import BaselineModel
 
-    model_wrapper = joblib.load(model_path)
-
-    # Get the underlying sklearn model
-    if hasattr(model_wrapper, "model"):
-        sklearn_model = model_wrapper.model
-    else:
-        sklearn_model = model_wrapper
+    model_wrapper = BaselineModel.load(model_path)
+    sklearn_model = model_wrapper.model
 
     # Determine export format
     export_format = config.target_format
     if export_format == "auto":
         export_format = "onnx" if HAS_ONNX else "pickle"
+    if export_format == "onnx" and not HAS_ONNX:
+        logger.warning("skl2onnx not installed; falling back to pickle export")
+        export_format = "pickle"
 
     # Export based on format
-    if export_format == "onnx" and HAS_ONNX:
-        edge_path, budget = _export_onnx(
-            sklearn_model, output_dir, n_features, config
-        )
+    if export_format == "onnx":
+        edge_path, budget = _export_onnx(sklearn_model, output_dir, n_features, config)
     else:
         edge_path, budget = _export_pickle_stub(
             sklearn_model, model_path, output_dir, n_features, config
@@ -161,6 +161,7 @@ def export_edge_model(
         "source_run": str(run_dir),
         "model_type": model_type,
         "export_format": budget.format,
+        "quantization": "not_applicable",
         "edge_model_path": str(edge_path),
         "budget_path": str(budget_path),
         "config": {
@@ -235,8 +236,8 @@ def _export_onnx(
         n_features=n_features,
         notes=[
             "ONNX export from sklearn model",
-            "Can run on ONNX Runtime (CPU/GPU)",
-            "Quantization to int8 available via ONNX Runtime tools",
+            "Can run on ONNX Runtime (CPU)",
+            "Quantization is not applied by this tool",
         ],
     )
 
@@ -245,27 +246,20 @@ def _export_onnx(
 
 def _export_pickle_stub(
     model: Any,
-    original_path: Path | None,
+    _original_path: Path | None,
     output_dir: Path,
     n_features: int,
     config: EdgeConfig,
 ) -> tuple[Path, EdgeBudget]:
     """Export as pickle stub with documentation."""
-    import shutil
-
     logger.info("Exporting as pickle stub (ONNX not available)")
 
-    # Copy or save model
+    # Save model
     stub_path = output_dir / "model_stub.joblib"
+    import joblib
 
-    if original_path and original_path.exists():
-        shutil.copy(original_path, stub_path)
-        model_size = os.path.getsize(stub_path)
-    else:
-        import joblib
-
-        joblib.dump(model, stub_path)
-        model_size = os.path.getsize(stub_path)
+    joblib.dump(model, stub_path)
+    model_size = os.path.getsize(stub_path)
 
     # Estimate RAM (pickle models need full Python runtime)
     estimated_ram = model_size * 3 + 50 * 1024  # Model + Python overhead
@@ -288,7 +282,7 @@ def _export_pickle_stub(
             "Pickle stub - requires Python runtime on edge",
             "For true edge deployment, install skl2onnx for ONNX export",
             "Alternative: Use Plan B (playback) strategy",
-            "Future: Deep model with TFLite int8 quantization",
+            "Future: Deep model with TFLite quantization",
         ],
     )
 
@@ -300,44 +294,49 @@ def _export_pickle_stub(
 
 def _create_tflite_placeholder(output_dir: Path) -> None:
     """Create placeholder structure for future TFLite support."""
+    import textwrap
+
     tflite_dir = output_dir / "tflite_future"
     tflite_dir.mkdir(exist_ok=True)
 
-    readme = """# TFLite Export (Future - H4)
+    readme = textwrap.dedent(
+        """\
+        # TFLite Export (Future - H4)
 
-This directory is prepared for TFLite model export with int8 quantization.
+        This directory is prepared for future TFLite model export and quantization.
 
-## Planned Features (H4 Deep Model)
+        ## Planned Features (H4 Deep Model)
 
-1. **Model Architecture**
-   - 1D CNN or LSTM for temporal patterns
-   - ~100K parameters target
-   - Input: 30s windows @ 100Hz
+        1. **Model Architecture**
+           - 1D CNN or LSTM for temporal patterns
+           - ~100K parameters target
+           - Input: 30s windows @ 100Hz
 
-2. **Quantization**
-   - Post-training quantization to int8
-   - Representative dataset from training data
-   - Target: <100KB model size
+        2. **Quantization (planned)**
+           - Post-training quantization to int8
+           - Representative dataset from training data
+           - Target: <100KB model size
 
-3. **Deployment**
-   - TensorFlow Lite Micro for MCU
-   - Android/iOS via TFLite interpreter
-   - ONNX Runtime Mobile as alternative
+        3. **Deployment**
+           - TensorFlow Lite Micro for MCU
+           - Android/iOS via TFLite interpreter
+           - ONNX Runtime Mobile as alternative
 
-## Current Status
+        ## Current Status
 
-- [ ] Deep model training
-- [ ] TFLite conversion
-- [ ] Int8 quantization
-- [ ] Edge benchmark
+        - [ ] Deep model training
+        - [ ] TFLite conversion
+        - [ ] Int8 quantization
+        - [ ] Edge benchmark
 
-## Fallback (Plan B)
+        ## Fallback (Plan B)
 
-If model deployment is infeasible:
-- Pre-compute predictions for known scenarios
-- Store lookup table on device
-- ~10KB storage requirement
-"""
+        If model deployment is infeasible:
+        - Pre-compute predictions for known scenarios
+        - Store lookup table on device
+        - ~10KB storage requirement
+        """
+    )
 
     with open(tflite_dir / "README.md", "w") as f:
         f.write(readme)

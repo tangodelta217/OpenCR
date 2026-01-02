@@ -70,6 +70,8 @@ def synthetic_baseline_run(tmp_path: Path) -> Path:
     results = {
         "model_type": "random_forest",
         "cv_strategy": "loso",
+        "target": "step",
+        "task_type": "classification",
         "n_subjects": 3,
         "n_samples": 60,
         "n_features": 45,
@@ -79,6 +81,61 @@ def synthetic_baseline_run(tmp_path: Path) -> Path:
             "accuracy": {"mean": 0.75, "std": 0.05, "min": 0.70, "max": 0.80},
             "f1": {"mean": 0.72, "std": 0.04, "min": 0.68, "max": 0.76},
             "auc_roc": {"mean": 0.82, "std": 0.03, "min": 0.79, "max": 0.85},
+        },
+    }
+
+    with open(run_dir / "results.json", "w") as f:
+        json.dump(results, f, indent=2)
+
+    return run_dir
+
+
+@pytest.fixture
+def synthetic_baseline_run_regression(tmp_path: Path) -> Path:
+    """Create a synthetic regression run for report testing."""
+    run_dir = tmp_path / "baseline_run_reg"
+    run_dir.mkdir()
+
+    fold_dir = run_dir / "fold_00"
+    fold_dir.mkdir()
+
+    n_samples = 30
+    y_true = np.linspace(0, 100, n_samples)
+    y_pred = y_true + np.random.normal(0, 5, n_samples)
+
+    np.savez(
+        fold_dir / "predictions.npz",
+        y_true=y_true,
+        y_pred=y_pred,
+        y_proba=np.array([]),
+    )
+
+    results = {
+        "model_type": "random_forest",
+        "cv_strategy": "loso",
+        "target": "opencr",
+        "task_type": "regression",
+        "n_subjects": 1,
+        "n_samples": n_samples,
+        "n_features": 45,
+        "feature_names": [f"feature_{i}" for i in range(45)],
+        "folds": [
+            {
+                "fold_idx": 0,
+                "test_subject": "subj001",
+                "n_train": 50,
+                "n_test": n_samples,
+                "metrics": {
+                    "rmse": 5.0,
+                    "mae": 4.0,
+                    "r2": 0.85,
+                },
+            }
+        ],
+        "aggregated_metrics": {
+            "rmse": {"mean": 5.0, "std": 0.0, "min": 5.0, "max": 5.0},
+            "mae": {"mean": 4.0, "std": 0.0, "min": 4.0, "max": 4.0},
+            "r2": {"mean": 0.85, "std": 0.0, "min": 0.85, "max": 0.85},
         },
     }
 
@@ -146,6 +203,32 @@ class TestAnnexA:
                 assert "Annex A" in content
                 assert "|" in content  # Table formatting
 
+    def test_multiclass_auc_range(self) -> None:
+        """Test multiclass AUC computation returns a valid value."""
+        from opencr.report.annexA import _compute_auc
+
+        y_true = np.array([0, 1, 2, 0, 1, 2])
+        y_proba = np.random.rand(6, 3)
+        y_proba = y_proba / y_proba.sum(axis=1, keepdims=True)
+
+        auc_val, roc_inputs = _compute_auc(y_true, y_proba)
+
+        assert auc_val is not None
+        assert 0.0 <= auc_val <= 1.0
+        assert roc_inputs is None
+
+    def test_regression_figures(self, synthetic_baseline_run_regression: Path) -> None:
+        """Test regression report generates scatter and error figures."""
+        from opencr.report.annexA import generate_annex_a
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            result = generate_annex_a(synthetic_baseline_run_regression, output_dir)
+
+            figure_names = {Path(p).name for p in result["figures"]}
+            assert "opencr_scatter.png" in figure_names
+            assert "opencr_error.png" in figure_names
+
 
 class TestReportCLI:
     """Tests for report CLI commands."""
@@ -193,3 +276,28 @@ class TestReportCLI:
             # Check at least some files
             assert len(list(figures_dir.glob("*.png"))) >= 2
             assert len(list(tables_dir.glob("*"))) >= 1
+
+    def test_report_metrics_runs(self, synthetic_baseline_run: Path) -> None:
+        """Test report metrics command runs successfully."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "metrics.json"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "opencr",
+                    "report",
+                    "metrics",
+                    str(synthetic_baseline_run),
+                    "--output",
+                    str(output_path),
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            assert result.returncode == 0
+            assert output_path.exists()
+            assert (Path(tmpdir) / "summary.csv").exists()
+            assert (Path(tmpdir) / "summary.md").exists()

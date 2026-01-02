@@ -1,7 +1,7 @@
 """
-OpenCR: Open Cognitive Radio
+OpenCR: Open Compensatory Reserve.
 
-A professional, reproducible ML/Signal Processing pipeline for TFM research.
+A reproducible ML/signal processing pipeline for Compensatory Reserve estimation.
 """
 
 __version__ = "0.1.0"

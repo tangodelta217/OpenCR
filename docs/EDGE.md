@@ -9,6 +9,7 @@ The current implementation supports standard machine learning models (Random For
    - **Supported**: RandomForest, GradientBoosting, SVM
    - **Toolchain**: `skl2onnx` + `onnxruntime`
    - **Performance**: CPU-optimized, no quantization (float32)
+   - **Quantization**: Not applicable for baseline sklearn exports (`--quantize` errors)
    - **Limitations**: Large tree ensembles can produce large ONNX graphs.
 
 2. **Pickle Stub (Fallback)**
@@ -32,7 +33,7 @@ The goal for Horizon 4 (H4) is to deploy deep learning models (1D-CNN, LSTM) to 
 - **Input**: 30s PPG/BioZ windows @ 100Hz.
 - **Framework**: PyTorch -> TFLite -> TFLite Micro.
 
-### Optimization Pipeline
+### Optimization Pipeline (Planned)
 1. **Quantization Aware Training (QAT)**
    - Train with fake quantization nodes to minimize accuracy loss.
 2. **Post-Training Quantization (PTQ)**
@@ -42,9 +43,9 @@ The goal for Horizon 4 (H4) is to deploy deep learning models (1D-CNN, LSTM) to 
    - **Platform**: ESP32 / Arduino Nano 33 BLE Sense.
    - **Inference Engine**: TensorFlow Lite for Microcontrollers.
 
-### Deployment Checklist (H4)
+### Deployment Checklist (H4, not implemented yet)
 - [ ] Train PyTorch model with `opencr train --model cnn_v1`
-- [ ] Export to ONNX: `opencr edge export --format onnx`
-- [ ] Convert to TFLite: `opencr edge export --format tflite --quantize`
+- [ ] Export to ONNX (future): `opencr edge export --format onnx`
+- [ ] Convert to TFLite (future): `opencr edge export --format tflite --quantize`
 - [ ] Verify accuracy on PC using TFLite interpreter
 - [ ] Measure power consumption on reference board

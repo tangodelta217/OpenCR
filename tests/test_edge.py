@@ -5,15 +5,16 @@ Tests artifact generation and budget estimation.
 """
 
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-import joblib
+import numpy as np
 import pytest
-from sklearn.ensemble import RandomForestClassifier
 
 from opencr.edge.export import EdgeConfig, export_edge_model
+from opencr.models.baseline import BaselineModel, ModelConfig, ModelType, TaskType
 
 
 @pytest.fixture
@@ -23,15 +24,21 @@ def synthetic_baseline_run_for_edge(tmp_path: Path) -> Path:
     run_dir.mkdir()
 
     # Create a small trained model
-    clf = RandomForestClassifier(n_estimators=5, random_state=42)
     X = [[0, 0], [1, 1]]
     y = [0, 1]
-    clf.fit(X, y)
+    config = ModelConfig(
+        task_type=TaskType.CLASSIFICATION,
+        model_type=ModelType.RANDOM_FOREST,
+        n_estimators=5,
+        random_state=42,
+    )
+    clf = BaselineModel(config)
+    clf.fit(np.array(X), np.array(y), feature_names=["f0", "f1"])
 
     # Save model in fold_00
     fold_dir = run_dir / "fold_00"
     fold_dir.mkdir()
-    joblib.dump(clf, fold_dir / "model.joblib")
+    clf.save(fold_dir / "model.joblib")
 
     # Create results.json
     results = {
@@ -82,9 +89,7 @@ class TestEdgeExport:
             output_dir = Path(tmpdir) / "edge_auto"
 
             result = export_edge_model(
-                synthetic_baseline_run_for_edge,
-                output_dir,
-                EdgeConfig(target_format="auto")
+                synthetic_baseline_run_for_edge, output_dir, EdgeConfig(target_format="auto")
             )
 
             # Should be pickle unless skl2onnx is installed in the test env
@@ -100,15 +105,81 @@ class TestEdgeExport:
             output_dir = Path(tmpdir) / "cli_out"
 
             cmd = [
-                sys.executable, "-m", "opencr", "edge", "export",
-                "--run", str(synthetic_baseline_run_for_edge),
-                "--out", str(output_dir),
-                "--format", "pickle"
+                sys.executable,
+                "-m",
+                "opencr",
+                "edge",
+                "export",
+                "--run",
+                str(synthetic_baseline_run_for_edge),
+                "--out",
+                str(output_dir),
+                "--format",
+                "pickle",
             ]
 
             result = subprocess.run(cmd, capture_output=True, text=True)
 
-            assert result.returncode == 0, f"Command failed: {result.stderr}\\nOutput: {result.stdout}"
+            assert (
+                result.returncode == 0
+            ), f"Command failed: {result.stderr}\\nOutput: {result.stdout}"
             assert "Export Complete" in result.stdout
             assert (output_dir / "edge_budget.json").exists()
 
+    def test_cli_benchmark_command(self, synthetic_baseline_run_for_edge: Path) -> None:
+        """Test the CLI command for edge benchmark."""
+        model_path = synthetic_baseline_run_for_edge / "fold_00" / "model.joblib"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "benchmark.json"
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "opencr",
+                "edge",
+                "benchmark",
+                str(model_path),
+                "--output",
+                str(output_path),
+                "--iterations",
+                "5",
+                "--warmup",
+                "1",
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            assert (
+                result.returncode == 0
+            ), f"Command failed: {result.stderr}\\nOutput: {result.stdout}"
+            assert output_path.exists()
+            assert (Path(tmpdir) / "benchmark_summary.csv").exists()
+            assert (Path(tmpdir) / "benchmark_summary.md").exists()
+
+            with open(output_path, encoding="utf-8") as f:
+                benchmark = json.load(f)
+            assert benchmark["inference"]["status"] in {"ok", "skipped"}
+
+    def test_cli_export_quantize_errors(self, synthetic_baseline_run_for_edge: Path) -> None:
+        """Quantize flag should error for baseline sklearn exports."""
+        model_run = synthetic_baseline_run_for_edge
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "cli_quantize"
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "opencr",
+                "edge",
+                "export",
+                "--run",
+                str(model_run),
+                "--out",
+                str(output_dir),
+                "--quantize",
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            assert result.returncode != 0
+            assert "Quantization" in result.stdout or "Quantization" in result.stderr

@@ -22,8 +22,12 @@ class SQIConfig:
     """Configuration for SQI computation."""
 
     clip_threshold: float = 0.99  # Fraction of max for clipping detection
-    energy_band_low: float = 0.5  # Hz - lower bound for in-band energy
-    energy_band_high: float = 4.0  # Hz - upper bound for in-band energy
+    energy_band_low: float = 0.5  # Hz - lower bound for PPG band energy
+    energy_band_high: float = 4.0  # Hz - upper bound for PPG band energy
+    bioz_resp_band_low: float = 0.1  # Hz - respiration band low
+    bioz_resp_band_high: float = 0.7  # Hz - respiration band high
+    bioz_pulse_band_low: float = 0.5  # Hz - pulse band low
+    bioz_pulse_band_high: float = 4.0  # Hz - pulse band high
     regularity_window: int = 10  # Window size for regularity computation
 
 
@@ -164,6 +168,8 @@ def compute_sqi(
     window: NDArray[np.floating],
     fs: float,
     config: SQIConfig | None = None,
+    *,
+    channel: str = "ppg",
 ) -> SQIResult:
     """
     Compute all SQI metrics for a single window.
@@ -184,7 +190,19 @@ def compute_sqi(
         window = window.mean(axis=1)
 
     clip_score = compute_clip_score(window, config.clip_threshold)
-    energy_score = compute_energy_score(window, fs, config.energy_band_low, config.energy_band_high)
+    channel = channel.lower()
+    if channel == "bioz":
+        resp_score = compute_energy_score(
+            window, fs, config.bioz_resp_band_low, config.bioz_resp_band_high
+        )
+        pulse_score = compute_energy_score(
+            window, fs, config.bioz_pulse_band_low, config.bioz_pulse_band_high
+        )
+        energy_score = max(resp_score, pulse_score)
+    else:
+        energy_score = compute_energy_score(
+            window, fs, config.energy_band_low, config.energy_band_high
+        )
     regularity_score = compute_regularity_score(window, config.regularity_window)
 
     # Combined score: geometric mean for balanced weighting
@@ -203,6 +221,7 @@ def compute_sqi_batch(
     windows: NDArray[np.floating],
     fs: float,
     config: SQIConfig | None = None,
+    channel_names: list[str] | None = None,
 ) -> NDArray[np.floating]:
     """
     Compute SQI for batch of windows.
@@ -223,17 +242,24 @@ def compute_sqi_batch(
 
     if windows.ndim == 2:
         # Single channel: (n_windows, window_samples)
+        channel_name = channel_names[0] if channel_names else "ppg"
         sqi_scores = np.zeros(n_windows, dtype=np.float64)
         for i in range(n_windows):
-            result = compute_sqi(windows[i], fs, config)
+            result = compute_sqi(windows[i], fs, config, channel=channel_name)
             sqi_scores[i] = result.combined_score
     elif windows.ndim == 3:
         # Multi-channel: (n_windows, n_channels, window_samples)
         n_channels = windows.shape[1]
+        if channel_names is None:
+            channel_names = ["ppg", "bioz"]
+        if len(channel_names) < n_channels:
+            channel_names = channel_names + [
+                f"ch{idx}" for idx in range(len(channel_names), n_channels)
+            ]
         sqi_scores = np.zeros((n_windows, n_channels), dtype=np.float64)
         for i in range(n_windows):
             for c in range(n_channels):
-                result = compute_sqi(windows[i, c], fs, config)
+                result = compute_sqi(windows[i, c], fs, config, channel=channel_names[c])
                 sqi_scores[i, c] = result.combined_score
     else:
         raise ValueError(f"Unexpected windows shape: {windows.shape}")

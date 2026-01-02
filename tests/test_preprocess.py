@@ -4,6 +4,7 @@ Tests for preprocessing pipeline.
 Creates synthetic signals and validates preprocessing functionality.
 """
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from opencr.data.adapters.base import SubjectData
 from opencr.preprocess.filters import bandpass_filter, highpass_filter, lowpass_filter
 from opencr.preprocess.pipeline import PreprocessingConfig, PreprocessingPipeline
 from opencr.preprocess.sqi import SQIConfig, compute_sqi, compute_sqi_batch
@@ -194,6 +196,18 @@ class TestSQI:
 
         assert sqi.shape == (10, 2)
 
+    def test_compute_sqi_bioz_respiration(self) -> None:
+        """Test BioZ SQI accepts respiration-dominant signals."""
+        fs = 100.0
+        t = np.arange(3000) / fs
+        signal = np.sin(2 * np.pi * 0.2 * t)  # 0.2 Hz respiration
+
+        config = SQIConfig(bioz_resp_band_low=0.1, bioz_resp_band_high=0.7)
+        result = compute_sqi(signal, fs, config, channel="bioz")
+
+        assert result.energy_score > 0.2
+        assert result.combined_score > 0.1
+
 
 class TestPipeline:
     """Tests for preprocessing pipeline."""
@@ -215,6 +229,29 @@ class TestPipeline:
         assert result.sqi.shape[0] == result.X.shape[0]
         assert result.valid_mask.shape[0] == result.X.shape[0]
         assert len(result.timestamps) == result.X.shape[0]
+
+    def test_bioz_resp_preserved(self) -> None:
+        """Test BioZ respiration content survives preprocessing filter."""
+        fs = 100.0
+        t = np.arange(int(fs * 60)) / fs
+        bioz = np.sin(2 * np.pi * 0.2 * t)
+        ppg = np.sin(2 * np.pi * 1.2 * t)
+
+        subject = SubjectData(
+            subject_id="s1",
+            signals={"ppg": ppg, "bioz": bioz},
+            sampling_rates={"ppg": fs, "bioz": fs},
+        )
+
+        config = PreprocessingConfig(window_sec=30.0, stride_sec=10.0)
+        pipeline = PreprocessingPipeline(config)
+        result = pipeline.process_subject(subject)
+
+        bioz_window = result.X[0, 1]
+        sqi_config = SQIConfig(bioz_resp_band_low=0.1, bioz_resp_band_high=0.7)
+        sqi = compute_sqi(bioz_window, fs, sqi_config, channel="bioz")
+
+        assert sqi.energy_score > 0.2
 
     def test_pipeline_process_dataset(self, synthetic_dataset: Path) -> None:
         """Test pipeline processes entire dataset."""
@@ -241,8 +278,13 @@ class TestPipeline:
             # Load and verify processed data
             with np.load(output_dir / "processed" / "subj001.npz", allow_pickle=True) as data:
                 assert "X" in data.files
+                assert "y_step" in data.files
+                assert "y_opencr" in data.files
+                assert "y_ord" in data.files
                 assert "sqi" in data.files
                 assert "valid_mask" in data.files
+                assert data["y_opencr"].shape == data["y_step"].shape
+                assert data["y_ord"].shape == data["y_step"].shape
 
 
 class TestPreprocessCLI:
@@ -288,3 +330,10 @@ class TestPreprocessCLI:
             assert result.returncode == 0
             assert (output_dir / "processed").exists()
             assert (output_dir / "config.json").exists()
+            manifest_path = output_dir / "manifest.json"
+            assert manifest_path.exists()
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+            assert manifest["stage"] == "preprocess"
+            assert "dataset_hash" in manifest
+            assert "config" in manifest
