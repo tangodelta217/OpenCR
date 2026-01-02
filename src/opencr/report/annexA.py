@@ -276,7 +276,10 @@ def _generate_markdown_table(results: dict, output_dir: Path) -> Path:
 
 
 def _compute_auc(
-    y_true: np.ndarray, y_proba: np.ndarray
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    *,
+    class_order: np.ndarray | list | None = None,
 ) -> tuple[float | None, tuple[np.ndarray, np.ndarray] | None]:
     """Compute AUC for binary or multiclass classification."""
     from sklearn.metrics import roc_auc_score
@@ -286,6 +289,15 @@ def _compute_auc(
 
     y_proba_arr = np.asarray(y_proba)
     classes = np.unique(y_true)
+
+    if class_order is not None and y_proba_arr.ndim == 2:
+        order = np.asarray(class_order)
+        if y_proba_arr.shape[1] == order.size:
+            try:
+                indices = [int(np.where(order == cls)[0][0]) for cls in classes]
+                y_proba_arr = y_proba_arr[:, indices]
+            except Exception:
+                return None, None
 
     if len(classes) == 2:
         pos_class = classes[-1]
@@ -299,6 +311,9 @@ def _compute_auc(
             y_score = y_proba_arr[:, pos_idx]
         auc_val = roc_auc_score(y_binary, y_score)
         return auc_val, (y_binary, y_score)
+
+    if y_proba_arr.ndim != 2 or y_proba_arr.shape[1] != len(classes):
+        return None, None
 
     if y_proba_arr.ndim != 2 or y_proba_arr.shape[1] != len(classes):
         return None, None
@@ -324,6 +339,7 @@ def _generate_roc_curve(
     fig, ax = plt.subplots(figsize=config.figsize)
 
     folds = results.get("folds", [])
+    class_order = results.get("class_order")
     colors = plt.cm.tab10.colors
 
     all_tprs = []
@@ -341,7 +357,7 @@ def _generate_roc_curve(
             y_proba = data["y_proba"]
 
             try:
-                roc_auc, roc_inputs = _compute_auc(y_true, y_proba)
+                roc_auc, roc_inputs = _compute_auc(y_true, y_proba, class_order=class_order)
                 if roc_auc is None:
                     continue
                 aucs.append(roc_auc)

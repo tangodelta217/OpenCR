@@ -149,7 +149,6 @@ def data_fetch(
     setup_logging()
     logger.info(f"Validating dataset: {input_dir}")
 
-    # Validate input directory
     if not input_dir.exists():
         console.print(f"[red]Error:[/red] Input directory not found: {input_dir}")
         raise typer.Exit(code=1)
@@ -158,7 +157,6 @@ def data_fetch(
         console.print(f"[red]Error:[/red] Input path is not a directory: {input_dir}")
         raise typer.Exit(code=1)
 
-    # Select adapter
     adapters = {"npz": LocalNpzAdapter}
     if adapter not in adapters:
         console.print(
@@ -166,14 +164,12 @@ def data_fetch(
         )
         raise typer.Exit(code=1)
 
-    # Create adapter and validate
     try:
         dataset_adapter = adapters[adapter](input_dir)
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1) from e
 
-    # Validate dataset structure
     is_valid, errors = dataset_adapter.validate()
     if not is_valid:
         console.print("[red]Dataset validation failed:[/red]")
@@ -181,18 +177,26 @@ def data_fetch(
             console.print(f"  - {error}")
         raise typer.Exit(code=1)
 
-    # Generate data card
     data_card = dataset_adapter.describe()
 
-    # Ensure output directory exists
     _ensure_dir(output_dir)
 
-    # Write data card
     card_path = output_dir / "data_card.json"
     with open(card_path, "w", encoding="utf-8") as f:
         json.dump(data_card.to_dict(), f, indent=2, ensure_ascii=False)
 
     logger.info(f"Data card written to: {card_path}")
+
+    if data_card.subjects_with_steps and data_card.subjects_missing_steps:
+        logger.warning(
+            "Mixed protocol step availability: %d with steps, %d missing steps",
+            len(data_card.subjects_with_steps),
+            len(data_card.subjects_missing_steps),
+        )
+        console.print(
+            f"[yellow]Warning:[/yellow] Protocol levels missing for "
+            f"{len(data_card.subjects_missing_steps)} subject(s)."
+        )
 
     console.print(
         Panel(
@@ -280,9 +284,25 @@ def data_preprocess(
         help="Path to data_card.json for reproducibility",
     ),
     data_hash: str = typer.Option(
-        "metadata",
+        "hybrid",
         "--data-hash",
-        help="Dataset hash method: metadata, content, none",
+        "--hash-mode",
+        help="Dataset hash method: stable, metadata, content, hybrid, none",
+    ),
+    data_hash_threshold_mb: float = typer.Option(
+        200.0,
+        "--data-hash-threshold-mb",
+        help="Hybrid hash threshold in MB (uses content below threshold)",
+    ),
+    protocol_levels: str | None = typer.Option(
+        None,
+        "--protocol-levels",
+        help="Comma-separated protocol levels (e.g., 0,-15,-30)",
+    ),
+    protocol_direction: str | None = typer.Option(
+        None,
+        "--protocol-direction",
+        help="Protocol direction: more_severe_lower or more_severe_higher",
     ),
 ) -> None:
     """
@@ -310,7 +330,6 @@ def data_preprocess(
     setup_logging()
     logger.info(f"Preprocessing data: {input_dir} -> {output_dir}")
 
-    # Validate input
     _validate_dir_exists(input_dir, "Input directory")
 
     if window_sec <= 0:
@@ -343,8 +362,16 @@ def data_preprocess(
         raise typer.Exit(code=1)
 
     data_hash = data_hash.lower()
-    if data_hash not in {"metadata", "content", "none"}:
-        console.print("[red]Error:[/red] data-hash must be metadata, content, or none")
+    if data_hash not in {"stable", "metadata", "content", "hybrid", "none"}:
+        console.print(
+            "[red]Error:[/red] data-hash must be stable, metadata, content, hybrid, or none"
+        )
+        raise typer.Exit(code=1)
+
+    if data_hash_threshold_mb <= 0:
+        console.print(
+            f"[red]Error:[/red] data-hash-threshold-mb must be positive, got {data_hash_threshold_mb}"
+        )
         raise typer.Exit(code=1)
 
     if data_card is not None:
@@ -354,7 +381,63 @@ def data_preprocess(
         if candidate.exists():
             data_card = candidate
 
-    # Create adapter
+    protocol_config: dict[str, object] | None = None
+    protocol_path = input_dir / "protocol.json"
+
+    def _parse_protocol_levels(raw_levels: str) -> list[float]:
+        parts = [p.strip() for p in raw_levels.split(",") if p.strip()]
+        if not parts:
+            raise ValueError("protocol-levels must be a non-empty list")
+        return [float(p) for p in parts]
+
+    def _normalize_protocol_direction(raw_direction: str) -> str:
+        direction_map = {
+            "more_severe_lower": "decreasing",
+            "more_severe_higher": "increasing",
+        }
+        if raw_direction not in direction_map:
+            raise ValueError("protocol-direction must be more_severe_lower or more_severe_higher")
+        return direction_map[raw_direction]
+
+    if protocol_levels is not None or protocol_direction is not None:
+        if protocol_levels is None or protocol_direction is None:
+            console.print(
+                "[red]Error:[/red] protocol-levels and protocol-direction must be provided together"
+            )
+            raise typer.Exit(code=1)
+        try:
+            levels = _parse_protocol_levels(protocol_levels)
+            direction = _normalize_protocol_direction(protocol_direction)
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(code=1) from e
+        protocol_config = {"levels": levels, "direction": direction}
+        if protocol_path.exists():
+            logger.warning("protocol.json found but overridden by CLI protocol flags")
+    elif protocol_path.exists():
+        import json
+
+        with open(protocol_path, encoding="utf-8") as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            console.print("[red]Error:[/red] protocol.json must be a JSON object")
+            raise typer.Exit(code=1)
+        levels = payload.get("levels")
+        direction_raw = payload.get("direction")
+        if not isinstance(levels, list) or not levels:
+            console.print("[red]Error:[/red] protocol.json levels must be a non-empty list")
+            raise typer.Exit(code=1)
+        if not isinstance(direction_raw, str):
+            console.print("[red]Error:[/red] protocol.json direction must be a string")
+            raise typer.Exit(code=1)
+        try:
+            levels = [float(p) for p in levels]
+            direction = _normalize_protocol_direction(direction_raw)
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(code=1) from e
+        protocol_config = {"levels": levels, "direction": direction}
+
     try:
         adapter = LocalNpzAdapter(input_dir)
     except ValueError as e:
@@ -382,7 +465,6 @@ def data_preprocess(
 
     pipeline = PreprocessingPipeline(config)
 
-    # Show configuration
     console.print(
         Panel(
             f"[cyan]Preprocessing Configuration[/cyan]\\n\\n"
@@ -399,16 +481,14 @@ def data_preprocess(
         )
     )
 
-    # Run pipeline
     _ensure_dir(output_dir)
 
     try:
-        stats = pipeline.process_dataset(adapter, output_dir)
+        stats = pipeline.process_dataset(adapter, output_dir, protocol=protocol_config)
     except Exception as e:
         console.print(f"[red]Error during processing:[/red] {e}")
         raise typer.Exit(code=1) from e
 
-    # Show results
     valid_pct = stats["valid_windows"] / max(stats["total_windows"], 1) * 100
     console.print(
         Panel(
@@ -422,7 +502,12 @@ def data_preprocess(
         )
     )
 
-    dataset_hash = compute_dataset_hash(output_dir / "processed", method=data_hash)
+    threshold_bytes = int(data_hash_threshold_mb * 1024 * 1024)
+    dataset_hash = compute_dataset_hash(
+        output_dir / "processed",
+        method=data_hash,
+        threshold_bytes=threshold_bytes if data_hash == "hybrid" else None,
+    )
     manifest = build_manifest(
         stage="preprocess",
         seed=None,
@@ -434,6 +519,16 @@ def data_preprocess(
             "config_path": str(output_dir / "config.json"),
             "stats_path": str(output_dir / "stats.json"),
             "processed_dir": str(output_dir / "processed"),
+            "target_map_path": str(output_dir / "target_map.json"),
+        },
+        extra={
+            "subjects_missing_steps": stats.get("subjects_missing_steps", []),
+            "target_map_source": stats.get("target_map_source"),
+            "protocol_levels": stats.get("protocol_levels"),
+            "protocol_direction": stats.get("protocol_direction"),
+            "target_map_warning": stats.get("target_map_warning"),
+            "hash_mode": data_hash,
+            "hash_threshold_bytes": threshold_bytes if data_hash == "hybrid" else None,
         },
     )
     write_manifest(output_dir / "manifest.json", manifest)
@@ -460,6 +555,31 @@ def baseline_train(
         "loso",
         "--cv",
         help="Cross-validation strategy: loso (leave-one-subject-out)",
+    ),
+    use_ppg: bool = typer.Option(
+        True,
+        "--use-ppg/--no-use-ppg",
+        help="Include PPG features",
+    ),
+    use_bioz: bool = typer.Option(
+        True,
+        "--use-bioz/--no-use-bioz",
+        help="Include BioZ features",
+    ),
+    use_sqi_gating: bool = typer.Option(
+        True,
+        "--use-sqi-gating/--no-use-sqi-gating",
+        help="Use SQI valid_mask gating",
+    ),
+    include_sqi_features: bool = typer.Option(
+        True,
+        "--include-sqi-features/--no-include-sqi-features",
+        help="Include SQI-derived features",
+    ),
+    sqi_gating_scope: str = typer.Option(
+        "auto",
+        "--sqi-gating-scope",
+        help="SQI gating scope: auto, min, ppg, bioz, none",
     ),
     target: str = typer.Option(
         "opencr",
@@ -513,6 +633,7 @@ def baseline_train(
     from opencr.evaluation.cv import loso_split
     from opencr.evaluation.metrics import (
         aggregate_fold_metrics,
+        align_proba_to_classes,
         compute_classification_metrics,
         compute_metrics_with_ci,
         compute_regression_metrics,
@@ -537,7 +658,36 @@ def baseline_train(
         console.print("[red]Error:[/red] target must be opencr, ordinal, or step")
         raise typer.Exit(code=1)
 
-    # Find all processed subject files
+    cv = cv.lower()
+    if cv not in {"loso"}:
+        console.print("[red]Error:[/red] cv must be 'loso' (leave-one-subject-out)")
+        raise typer.Exit(code=1)
+
+    if not use_ppg and not use_bioz:
+        console.print("[red]Error:[/red] At least one of --use-ppg or --use-bioz must be true")
+        raise typer.Exit(code=1)
+
+    sqi_gating_scope = sqi_gating_scope.lower()
+    if sqi_gating_scope not in {"auto", "min", "ppg", "bioz", "none"}:
+        console.print("[red]Error:[/red] sqi-gating-scope must be auto, min, ppg, bioz, or none")
+        raise typer.Exit(code=1)
+
+    if sqi_gating_scope == "auto":
+        if use_ppg and not use_bioz:
+            effective_scope = "ppg"
+        elif use_bioz and not use_ppg:
+            effective_scope = "bioz"
+        else:
+            effective_scope = "min"
+    else:
+        effective_scope = sqi_gating_scope
+
+    if not use_sqi_gating or effective_scope == "none":
+        gating_enabled = False
+        effective_scope = "none"
+    else:
+        gating_enabled = True
+
     npz_files = sorted(processed_dir.glob("*.npz"))
     if not npz_files:
         console.print(f"[red]Error:[/red] No processed .npz files in {processed_dir}")
@@ -555,6 +705,24 @@ def baseline_train(
             with open(config_path) as f:
                 preprocess_config = json.load(f)
 
+    subjects_missing_steps: list[str] = []
+    if preprocess_manifest:
+        subjects_missing_steps = preprocess_manifest.get("subjects_missing_steps", []) or []
+    if not subjects_missing_steps:
+        stats_path = processed_dir.parent / "stats.json"
+        if stats_path.exists():
+            with open(stats_path, encoding="utf-8") as f:
+                stats = json.load(f)
+            subjects_missing_steps = stats.get("subjects_missing_steps", []) or []
+
+    if target in {"opencr", "ordinal"} and subjects_missing_steps:
+        console.print(
+            "[red]Error:[/red] Missing protocol steps for subjects: "
+            f"{', '.join(subjects_missing_steps)}"
+        )
+        console.print("Re-run preprocessing with protocol steps or choose --target step.")
+        raise typer.Exit(code=1)
+
     if data_card is not None:
         _validate_file_exists(data_card, "data_card.json")
     else:
@@ -571,9 +739,15 @@ def baseline_train(
     if preprocess_manifest and "dataset_hash" in preprocess_manifest:
         dataset_hash = preprocess_manifest.get("dataset_hash")
     else:
-        dataset_hash = compute_dataset_hash(processed_dir, method="metadata")
+        dataset_hash = compute_dataset_hash(processed_dir, method="hybrid")
 
-    # Load all subjects and extract features
+    feature_config = FeatureConfig(
+        include_ppg=use_ppg,
+        include_bioz=use_bioz,
+        include_sqi=include_sqi_features,
+        include_cross=use_ppg and use_bioz,
+    )
+
     all_features = []
     all_labels = []
     all_subjects = []
@@ -582,7 +756,13 @@ def baseline_train(
     ordinal_bins = None
     total_windows = 0
     total_valid = 0
+    total_valid_min = 0
+    total_valid_ppg = 0
+    total_valid_bioz = 0
+    has_ppg_mask = True
+    has_bioz_mask = True
     fs = 100.0  # Default, will be overwritten if available
+    subject_counts: dict[str, dict[str, int | None]] = {}
 
     for npz_path in npz_files:
         subject_id = npz_path.stem
@@ -591,7 +771,6 @@ def baseline_train(
         with np.load(npz_path, allow_pickle=True) as data:
             X = data["X"]
             sqi = data["sqi"]
-            valid_mask = data["valid_mask"]
             meta = data["metadata"].item() if "metadata" in data.files else {}
             fs = meta.get("fs", 100.0)
 
@@ -610,12 +789,91 @@ def baseline_train(
             y_ord = data["y_ord"] if "y_ord" in data.files else np.array([])
 
             total_windows += X.shape[0]
-            total_valid += int(valid_mask.sum())
 
-            # Skip subjects with no valid windows
-            if valid_mask.sum() == 0:
-                logger.warning(f"Subject {subject_id} has no valid windows, skipping")
-                continue
+            valid_mask_min = None
+            valid_mask_ppg = None
+            valid_mask_bioz = None
+            if "valid_mask_min" in data.files:
+                valid_mask_min = data["valid_mask_min"]
+            elif "valid_mask" in data.files:
+                valid_mask_min = data["valid_mask"]
+
+            if "valid_mask_ppg" in data.files:
+                valid_mask_ppg = data["valid_mask_ppg"]
+            if "valid_mask_bioz" in data.files:
+                valid_mask_bioz = data["valid_mask_bioz"]
+
+            if valid_mask_ppg is not None and valid_mask_ppg.size == 0:
+                valid_mask_ppg = None
+            if valid_mask_bioz is not None and valid_mask_bioz.size == 0:
+                valid_mask_bioz = None
+
+            threshold = float(meta.get("sqi_threshold", 0.5))
+            channel_names = meta.get("channels") or ["ppg", "bioz"]
+            channel_names_lower = [str(name).lower() for name in channel_names]
+
+            if sqi.ndim > 1:
+                if valid_mask_ppg is None and "ppg" in channel_names_lower:
+                    idx = channel_names_lower.index("ppg")
+                    valid_mask_ppg = sqi[:, idx] >= threshold
+                if valid_mask_bioz is None and "bioz" in channel_names_lower:
+                    idx = channel_names_lower.index("bioz")
+                    valid_mask_bioz = sqi[:, idx] >= threshold
+                if valid_mask_min is None:
+                    valid_mask_min = sqi.min(axis=1) >= threshold
+            else:
+                if valid_mask_min is None:
+                    valid_mask_min = sqi >= threshold
+                if channel_names_lower:
+                    if channel_names_lower[0] == "ppg" and valid_mask_ppg is None:
+                        valid_mask_ppg = valid_mask_min
+                    if channel_names_lower[0] == "bioz" and valid_mask_bioz is None:
+                        valid_mask_bioz = valid_mask_min
+
+            if valid_mask_min is None:
+                valid_mask_min = np.ones(X.shape[0], dtype=bool)
+
+            subject_counts[subject_id] = {
+                "total": int(X.shape[0]),
+                "ppg": int(valid_mask_ppg.sum()) if valid_mask_ppg is not None else None,
+                "bioz": int(valid_mask_bioz.sum()) if valid_mask_bioz is not None else None,
+                "min": int(valid_mask_min.sum()),
+            }
+
+            total_valid_min += int(valid_mask_min.sum())
+            if valid_mask_ppg is None:
+                has_ppg_mask = False
+            else:
+                total_valid_ppg += int(valid_mask_ppg.sum())
+            if valid_mask_bioz is None:
+                has_bioz_mask = False
+            else:
+                total_valid_bioz += int(valid_mask_bioz.sum())
+
+            if gating_enabled:
+                if effective_scope == "ppg":
+                    gating_mask = valid_mask_ppg
+                elif effective_scope == "bioz":
+                    gating_mask = valid_mask_bioz
+                else:
+                    gating_mask = valid_mask_min
+
+                if gating_mask is None:
+                    logger.warning(
+                        "SQI gating scope '%s' unavailable for %s; disabling gating for subject",
+                        effective_scope,
+                        subject_id,
+                    )
+                    gating_mask = np.ones(X.shape[0], dtype=bool)
+
+                total_valid += int(gating_mask.sum())
+
+                if gating_mask.sum() == 0:
+                    logger.warning(f"Subject {subject_id} has no valid windows, skipping")
+                    continue
+            else:
+                gating_mask = np.ones(X.shape[0], dtype=bool)
+                total_valid += X.shape[0]
 
             if target == "opencr":
                 y_target = y_opencr
@@ -640,12 +898,19 @@ def baseline_train(
                 )
                 raise typer.Exit(code=1)
 
-            # Extract features from valid windows only
-            X_valid = X[valid_mask]
-            y_valid = y_target[valid_mask]
-            sqi_valid = sqi[valid_mask]
+            if gating_enabled:
+                X_valid = X[gating_mask]
+                y_valid = y_target[gating_mask]
+                sqi_valid = sqi[gating_mask]
+            else:
+                X_valid = X
+                y_valid = y_target
+                sqi_valid = sqi
 
-            features, feature_names = extract_all_features(X_valid, fs, sqi_valid)
+            sqi_for_features = sqi_valid if include_sqi_features else None
+            features, feature_names = extract_all_features(
+                X_valid, fs, sqi_for_features, config=feature_config
+            )
 
             n_windows = features.shape[0]
             all_features.append(features)
@@ -675,6 +940,9 @@ def baseline_train(
         raise typer.Exit(code=1)
 
     task_type = TaskType.REGRESSION if target == "opencr" else TaskType.CLASSIFICATION
+    class_order = None
+    if task_type == TaskType.CLASSIFICATION:
+        class_order = np.unique(y_all)
 
     model_config = ModelConfig(
         task_type=task_type,
@@ -692,6 +960,25 @@ def baseline_train(
     ci_subjects = []
     has_proba = True
     splits_info: list[dict[str, object]] = []
+    subject_coverage = {}
+    for sid, counts in subject_counts.items():
+        total = counts.get("total") or 0
+        if total == 0:
+            subject_coverage[sid] = 0.0
+            continue
+        if not gating_enabled:
+            subject_coverage[sid] = 1.0
+            continue
+        if effective_scope == "ppg":
+            valid = counts.get("ppg")
+        elif effective_scope == "bioz":
+            valid = counts.get("bioz")
+        else:
+            valid = counts.get("min")
+        if valid is None:
+            subject_coverage[sid] = 1.0
+        else:
+            subject_coverage[sid] = float(valid) / float(total)
 
     for fold in loso_split(subjects_arr):
         console.print(f"  Fold {fold.fold_idx + 1}: test={fold.test_subject}")
@@ -708,16 +995,25 @@ def baseline_train(
         # Predict
         y_pred = model.predict(X_test)
         y_proba = model.predict_proba(X_test)
+        y_proba_aligned = y_proba
+        if task_type == TaskType.CLASSIFICATION and y_proba is not None and class_order is not None:
+            classes = getattr(model.model, "classes_", None)
+            if classes is not None:
+                y_proba_aligned = align_proba_to_classes(y_proba, classes, class_order)
 
         # Compute metrics
         if task_type == TaskType.REGRESSION:
             metrics = compute_regression_metrics(y_test, y_pred)
-            y_proba = None
+            y_proba_aligned = None
         else:
-            metrics = compute_classification_metrics(y_test, y_pred, y_proba)
+            metrics = compute_classification_metrics(
+                y_test,
+                y_pred,
+                y_proba_aligned,
+                class_order=class_order,
+            )
         fold_metrics.append(metrics)
 
-        # Save fold results
         fold_dir = output_dir / f"fold_{fold.fold_idx:02d}"
         fold_dir.mkdir(parents=True, exist_ok=True)
 
@@ -727,17 +1023,18 @@ def baseline_train(
             fold_dir / "predictions.npz",
             y_true=y_test,
             y_pred=y_pred,
-            y_proba=y_proba if y_proba is not None else np.array([]),
+            y_proba=y_proba_aligned if y_proba_aligned is not None else np.array([]),
+            class_order=class_order if class_order is not None else np.array([]),
         )
 
         ci_y_true.append(y_test)
         ci_y_pred.append(y_pred)
         ci_subjects.append(np.array([fold.test_subject] * len(y_test)))
         if task_type == TaskType.CLASSIFICATION:
-            if y_proba is None or len(y_proba) == 0:
+            if y_proba_aligned is None or len(y_proba_aligned) == 0:
                 has_proba = False
             else:
-                ci_y_proba.append(y_proba)
+                ci_y_proba.append(y_proba_aligned)
 
         fold_results.append(
             {
@@ -745,6 +1042,7 @@ def baseline_train(
                 "test_subject": fold.test_subject,
                 "n_train": len(X_train),
                 "n_test": len(X_test),
+                "coverage": subject_coverage.get(fold.test_subject),
                 "metrics": metrics.to_dict(),
             }
         )
@@ -776,9 +1074,17 @@ def baseline_train(
             task_type.value,
             n_boot=n_boot,
             seed=seed,
+            class_order=class_order,
         )
 
-    # Save overall results
+    coverage_by_mask = {}
+    if total_windows > 0:
+        coverage_by_mask["min"] = total_valid_min / total_windows
+        if has_ppg_mask:
+            coverage_by_mask["ppg"] = total_valid_ppg / total_windows
+        if has_bioz_mask:
+            coverage_by_mask["bioz"] = total_valid_bioz / total_windows
+
     results = {
         "model_type": model_type,
         "cv_strategy": cv,
@@ -787,10 +1093,20 @@ def baseline_train(
         "target_direction": target_direction,
         "ordinal_bins": ordinal_bins,
         "coverage": (total_valid / total_windows) if total_windows > 0 else 0.0,
+        "coverage_by_mask": coverage_by_mask,
+        "ablation": {
+            "use_ppg": use_ppg,
+            "use_bioz": use_bioz,
+            "use_sqi_gating": use_sqi_gating,
+            "include_sqi_features": include_sqi_features,
+            "sqi_gating_scope": sqi_gating_scope,
+            "sqi_gating_scope_effective": effective_scope,
+        },
         "n_subjects": len(subject_ids),
         "n_samples": len(X_all),
         "n_features": X_all.shape[1],
         "feature_names": feature_names,
+        "class_order": class_order.tolist() if class_order is not None else None,
         "folds": fold_results,
         "aggregated_metrics": aggregated,
         "metrics_ci": metrics_ci,
@@ -804,7 +1120,6 @@ def baseline_train(
     with open(splits_path, "w", encoding="utf-8") as f:
         json.dump(splits_info, f, indent=2)
 
-    feature_config = FeatureConfig()
     manifest = build_manifest(
         stage="baseline_train",
         seed=seed,
@@ -816,6 +1131,14 @@ def baseline_train(
             "features": asdict(feature_config),
             "model": asdict(model_config),
             "cv": {"strategy": cv, "n_folds": len(fold_results)},
+            "ablation": {
+                "use_ppg": use_ppg,
+                "use_bioz": use_bioz,
+                "use_sqi_gating": use_sqi_gating,
+                "include_sqi_features": include_sqi_features,
+                "sqi_gating_scope": sqi_gating_scope,
+                "sqi_gating_scope_effective": effective_scope,
+            },
         },
         splits=splits_info,
         artifacts={
@@ -828,7 +1151,6 @@ def baseline_train(
     )
     write_manifest(output_dir / "manifest.json", manifest)
 
-    # Create results.csv
     import csv
 
     csv_path = output_dir / "results.csv"
@@ -965,7 +1287,6 @@ def baseline_evaluate(
                 f"[{stats['min']:.4f}, {stats['max']:.4f}]{ci_str}"
             )
 
-    # Save summary
     out_path = output_file or (run_dir / "summary.json")
     summary = {
         "n_folds": len(folds),
@@ -1232,14 +1553,33 @@ def edge_export(
     manifest = result["manifest_path"]
 
     # Display summary
+    meets_budget = budget.get("meets_budget")
+    if meets_budget is True:
+        overall_status = "OK"
+    elif meets_budget is False:
+        overall_status = "FAIL"
+    else:
+        overall_status = "UNKNOWN"
+
+    latency_status = str(budget.get("latency", {}).get("status", "unknown")).upper()
+    flash_status = str(budget.get("flash", {}).get("status", "unknown")).upper()
+    ram_status = str(budget.get("ram", {}).get("status", "unknown")).upper()
+
+    flash_kb = budget.get("flash", {}).get("kb")
+    flash_str = f"{flash_kb} KB" if flash_kb is not None else "unknown"
+    ram_kb = budget.get("ram", {}).get("estimated_kb")
+    ram_str = f"{ram_kb} KB" if ram_kb is not None else "unknown"
+
     console.print(
         Panel(
             f"[bold green]Export Complete![/bold green]\\n\\n"
             f"Format: [cyan]{result['format']}[/cyan]\\n"
             f"Path: [cyan]{result['edge_model_path']}[/cyan]\\n"
             f"Size: {budget['model_size']['kb']} KB\\n"
-            f"Latency Est: {budget['latency']['estimated_ms']} ms "
-            f"({'OK' if budget['latency']['meets_budget'] else 'WARNING'})\\n\\n"
+            f"Latency Est: {budget['latency']['estimated_ms']} ms ({latency_status})\\n"
+            f"Flash: {flash_str} ({flash_status})\\n"
+            f"RAM: {ram_str} ({ram_status})\\n"
+            f"Budget: {overall_status}\\n\\n"
             f"Manifest: {manifest}",
             title="Edge Artifacts",
         )
@@ -1253,12 +1593,18 @@ def edge_export(
 
 @edge_app.command("benchmark")
 def edge_benchmark(
-    model_path: Path = typer.Argument(
-        ...,
+    model_path: Path | None = typer.Argument(
+        None,
         help="Path to ONNX or sklearn model artifact",
+    ),
+    run_dir: Path | None = typer.Option(
+        None,
+        "--run",
+        help="Baseline run directory (used to locate exported edge artifact)",
     ),
     output_path: Path = typer.Option(
         Path("docs/benchmark.json"),
+        "--out",
         "--output",
         "-o",
         help="Output path for benchmark results",
@@ -1289,15 +1635,13 @@ def edge_benchmark(
     \b
     Example:
       opencr edge benchmark models/model.onnx --iterations 1000 --device cpu
+      opencr edge benchmark --run runs/demo/baseline --out runs/demo/edge
     """
     import json
 
     from opencr.edge.benchmark import benchmark_edge_model, write_benchmark_tables
 
     setup_logging()
-    logger.info(f"Running benchmark: {model_path}")
-
-    _validate_file_exists(model_path, "Model file")
 
     if iterations <= 0:
         console.print(f"[red]Error:[/red] iterations must be positive, got {iterations}")
@@ -1311,6 +1655,34 @@ def edge_benchmark(
     output_dir = output_path if output_path.suffix == "" else output_path.parent
     _ensure_dir(output_dir)
     json_path = output_path if output_path.suffix else output_dir / "benchmark.json"
+
+    if model_path is None:
+        if run_dir is None:
+            console.print("[red]Error:[/red] Provide MODEL_PATH or use --run to locate an export.")
+            raise typer.Exit(code=1)
+        run_dir = Path(run_dir)
+        candidates = [
+            output_dir / "model.onnx",
+            output_dir / "model_stub.joblib",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                model_path = candidate
+                break
+        if model_path is None:
+            for fold_dir in sorted(run_dir.glob("fold_*")):
+                candidate = fold_dir / "model.joblib"
+                if candidate.exists():
+                    model_path = candidate
+                    break
+        if model_path is None:
+            console.print("[red]Error:[/red] No model artifact found in output dir or run dir.")
+            raise typer.Exit(code=1)
+
+    model_path = Path(model_path)
+    logger.info(f"Running benchmark: {model_path}")
+
+    _validate_file_exists(model_path, "Model file")
 
     benchmark = benchmark_edge_model(
         model_path,
@@ -1369,6 +1741,11 @@ def demo_run(
         "-d",
         help="Delay between updates in milliseconds",
     ),
+    ascii: bool | None = typer.Option(
+        None,
+        "--ascii/--no-ascii",
+        help="Force ASCII output (auto-detect if not set).",
+    ),
 ) -> None:
     """
     Run live fuel gauge demo.
@@ -1390,7 +1767,7 @@ def demo_run(
         console.print(f"[red]Error:[/red] delay must be positive, got {delay}")
         raise typer.Exit(code=1)
 
-    config = DemoConfig(delay_ms=delay)
+    config = DemoConfig(delay_ms=delay, ascii_only=ascii)
     run_demo(run_dir, subject, config)
 
 
@@ -1407,6 +1784,11 @@ def demo_fuel_gauge(
         "--duration",
         "-d",
         help="Demo duration in seconds",
+    ),
+    ascii: bool | None = typer.Option(
+        None,
+        "--ascii/--no-ascii",
+        help="Force ASCII output (auto-detect if not set).",
     ),
 ) -> None:
     """
@@ -1432,7 +1814,7 @@ def demo_fuel_gauge(
         console.print(f"[red]Error:[/red] duration must be positive, got {duration}")
         raise typer.Exit(code=1)
 
-    run_fuel_gauge_demo(threshold, duration)
+    run_fuel_gauge_demo(threshold, duration, ascii_only=ascii)
 
 
 # Entry point for `python -m opencr`
