@@ -4,14 +4,9 @@ This directory contains project documentation.
 
 ## Contents
 
-- `architecture.md` - System architecture and design decisions
-- `api.md` - API reference (auto-generated)
-- `tutorials/` - Step-by-step guides
-- `figures/` - Diagrams and visualizations
+- `EDGE.md` - Edge export and budgeting details
+- `demo_guide.md` - Demo workflow and CLI examples
+- `GITHUB_RELEASE_CHECKLIST.md` - Release checklist and repo audit step
+- `README.md` - This index
 
-## Building Documentation
-
-```bash
-# Generate API docs (future)
-opencr docs build
-```
+Docs are Markdown files; view them directly in your editor or in GitHub.

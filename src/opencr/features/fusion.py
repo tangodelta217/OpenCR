@@ -35,7 +35,7 @@ def extract_all_features(
     channel_names: list[str] | None = None,
 ) -> tuple[NDArray[np.floating], list[str]]:
     """
-    Extract all features from multi-channel windows.
+    Extract all features from multi-signal windows.
 
     Args:
         X: Windows tensor, shape (n_windows, n_channels, window_samples).

@@ -185,9 +185,8 @@ def compute_sqi(
     if config is None:
         config = SQIConfig()
 
-    # Handle multi-channel by taking first channel or mean
-    if window.ndim > 1:
-        window = window.mean(axis=1)
+    if window.ndim != 1:
+        raise ValueError(f"SQI expects single-channel window, got shape {window.shape}")
 
     clip_score = compute_clip_score(window, config.clip_threshold)
     channel = channel.lower()

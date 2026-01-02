@@ -61,10 +61,44 @@ class RegressionMetrics:
         }
 
 
+def align_proba_to_classes(
+    y_proba: NDArray[np.floating] | None,
+    source_classes: NDArray | list,
+    target_classes: NDArray | list,
+) -> NDArray[np.floating] | None:
+    """
+    Align predicted probabilities to a target class order.
+
+    Missing classes in the source are filled with 0.0.
+    """
+    if y_proba is None:
+        return None
+
+    y_proba_arr = np.asarray(y_proba)
+    if y_proba_arr.ndim != 2:
+        return y_proba_arr
+
+    source = np.asarray(source_classes)
+    target = np.asarray(target_classes)
+
+    if source.size != y_proba_arr.shape[1]:
+        raise ValueError("y_proba shape does not match source_classes")
+
+    aligned = np.zeros((y_proba_arr.shape[0], target.size), dtype=y_proba_arr.dtype)
+    for idx, cls in enumerate(target):
+        matches = np.where(source == cls)[0]
+        if matches.size > 0:
+            aligned[:, idx] = y_proba_arr[:, matches[0]]
+
+    return aligned
+
+
 def compute_classification_metrics(
     y_true: NDArray,
     y_pred: NDArray,
     y_proba: NDArray[np.floating] | None = None,
+    *,
+    class_order: NDArray | list | None = None,
 ) -> ClassificationMetrics:
     """
     Compute classification metrics.
@@ -106,8 +140,22 @@ def compute_classification_metrics(
     if y_proba is not None:
         try:
             y_proba_arr = np.asarray(y_proba)
+            class_order_arr = None
+            if class_order is not None:
+                class_order_arr = np.asarray(class_order)
+                if y_proba_arr.ndim == 2 and class_order_arr.size != y_proba_arr.shape[1]:
+                    raise ValueError("y_proba shape does not match class_order")
+                missing = [cls for cls in classes if cls not in class_order_arr]
+                if missing:
+                    raise ValueError("class_order does not cover classes in y_true")
+                indices = [int(np.where(class_order_arr == cls)[0][0]) for cls in classes]
+                if y_proba_arr.ndim == 2:
+                    y_proba_arr = y_proba_arr[:, indices]
+
             if len(classes) == 2:
                 # Binary classification
+                if len(np.unique(y_true)) < 2:
+                    raise ValueError("AUC undefined for single-class y_true")
                 pos_class = classes[-1]
                 y_binary = (y_true == pos_class).astype(int)
                 if y_proba_arr.ndim == 1:
@@ -239,6 +287,7 @@ def compute_metrics_with_ci(
     *,
     n_boot: int = 200,
     seed: int = 42,
+    class_order: NDArray | list | None = None,
 ) -> tuple[ClassificationMetrics | RegressionMetrics, dict[str, dict[str, float]]]:
     """
     Compute metrics and bootstrap confidence intervals by subject.
@@ -267,7 +316,7 @@ def compute_metrics_with_ci(
         metrics = compute_regression_metrics(y_true, y_pred)
         metric_names = ["rmse", "mae", "r2"]
     else:
-        metrics = compute_classification_metrics(y_true, y_pred, y_proba)
+        metrics = compute_classification_metrics(y_true, y_pred, y_proba, class_order=class_order)
         metric_names = ["accuracy", "f1", "auc_roc"]
         if metrics.auc_roc is None:
             metric_names = ["accuracy", "f1"]
@@ -291,7 +340,7 @@ def compute_metrics_with_ci(
             else:
                 boot_proba = y_proba[indices]
             boot_metrics = compute_classification_metrics(
-                y_true[indices], y_pred[indices], boot_proba
+                y_true[indices], y_pred[indices], boot_proba, class_order=class_order
             )
 
         for name in metric_names:

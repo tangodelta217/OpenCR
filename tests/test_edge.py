@@ -83,6 +83,38 @@ class TestEdgeExport:
             # Check logic
             assert "plan_b" in budget
 
+    def test_budget_flash_exceeds(self, synthetic_baseline_run_for_edge: Path) -> None:
+        """Flash budget should fail when artifacts exceed target."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "edge_out"
+
+            config = EdgeConfig(
+                target_format="pickle",
+                target_latency_ms=1000.0,
+                target_flash_kb=0.001,
+            )
+            result = export_edge_model(synthetic_baseline_run_for_edge, output_dir, config)
+            budget = result["budget"]
+
+            assert budget["flash"]["status"] == "fail"
+            assert budget["meets_budget"] is False
+
+    def test_budget_ram_unknown(self, synthetic_baseline_run_for_edge: Path) -> None:
+        """RAM unknown should force overall budget to unknown."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "edge_out"
+
+            config = EdgeConfig(
+                target_format="pickle",
+                target_latency_ms=1000.0,
+                target_flash_kb=100000.0,
+            )
+            result = export_edge_model(synthetic_baseline_run_for_edge, output_dir, config)
+            budget = result["budget"]
+
+            assert budget["ram"]["status"] == "unknown"
+            assert budget["meets_budget"] is None
+
     def test_export_auto_selection(self, synthetic_baseline_run_for_edge: Path) -> None:
         """Test auto format selection."""
         with tempfile.TemporaryDirectory() as tmpdir:

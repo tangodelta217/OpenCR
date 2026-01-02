@@ -9,14 +9,15 @@ Expected structure:
         ...
 
 Each .npz file must contain:
-    - ppg: PPG signal array
-    - bioz: Bioimpedance signal array
+    - ppg: PPG signal array, shape (N,) or (1, N)
+    - bioz: Bioimpedance signal array, shape (N,) or (1, N)
     - fs_ppg: PPG sampling rate (scalar)
     - fs_bioz: Bioimpedance sampling rate (scalar)
 
 Optional fields:
-    - t: Timestamps array (aligned with longest signal)
+    - t: Timestamps array aligned with the reference signal and step
     - step: Protocol step/level array (aligned in time)
+    - t_step: Timestamps array aligned with step (if different from t)
     - metadata: Dictionary with additional info
 """
 
@@ -34,7 +35,28 @@ logger = get_logger(__name__)
 REQUIRED_FIELDS = {"ppg", "bioz", "fs_ppg", "fs_bioz"}
 
 # Optional fields
-OPTIONAL_FIELDS = {"t", "step", "metadata"}
+OPTIONAL_FIELDS = {"t", "step", "t_step", "metadata"}
+
+
+_SINGLE_CHANNEL_ERROR = (
+    "Multichannel not supported in v0.x. Select one channel or average before loading."
+)
+
+
+def _ensure_single_channel(
+    signal: np.ndarray,
+    *,
+    name: str,
+    subject_id: str,
+) -> np.ndarray:
+    arr = np.asarray(signal)
+    if arr.ndim == 1:
+        return arr
+    if arr.ndim == 2 and arr.shape[0] == 1:
+        return arr[0]
+    raise ValueError(
+        f"{_SINGLE_CHANNEL_ERROR} Signal '{name}' in '{subject_id}' has shape {arr.shape}."
+    )
 
 
 class LocalNpzAdapter(DatasetAdapter):
@@ -48,7 +70,7 @@ class LocalNpzAdapter(DatasetAdapter):
         adapter = LocalNpzAdapter(Path("data/raw"))
         subjects = adapter.list_subjects()  # ["subject001", "subject002", ...]
         data = adapter.load_subject("subject001")
-        print(data.signals["ppg"].shape)  # (N,) or (N, channels)
+        print(data.signals["ppg"].shape)  # (N,) or (1, N)
     """
 
     def __init__(self, data_path: Path) -> None:
@@ -113,8 +135,16 @@ class LocalNpzAdapter(DatasetAdapter):
 
             # Extract signals
             signals = {
-                "ppg": np.asarray(data["ppg"]),
-                "bioz": np.asarray(data["bioz"]),
+                "ppg": _ensure_single_channel(
+                    np.asarray(data["ppg"]),
+                    name="ppg",
+                    subject_id=subject_id,
+                ),
+                "bioz": _ensure_single_channel(
+                    np.asarray(data["bioz"]),
+                    name="bioz",
+                    subject_id=subject_id,
+                ),
             }
 
             # Extract sampling rates (handle scalar or 0-d array)
@@ -127,8 +157,12 @@ class LocalNpzAdapter(DatasetAdapter):
 
             # Extract optional timestamps
             timestamps = None
-            if "t" in available_fields:
-                timestamps = {"t": np.asarray(data["t"])}
+            if "t" in available_fields or "t_step" in available_fields:
+                timestamps = {}
+                if "t" in available_fields:
+                    timestamps["t"] = np.asarray(data["t"])
+                if "t_step" in available_fields:
+                    timestamps["t_step"] = np.asarray(data["t_step"])
 
             # Extract optional protocol levels
             protocol_levels = None
@@ -180,11 +214,23 @@ class LocalNpzAdapter(DatasetAdapter):
         """
         subjects = self.list_subjects()
 
-        # Sample first subject to get signal info
-        sample = self.load_subject(subjects[0])
+        subjects_with_steps: list[str] = []
+        subjects_missing_steps: list[str] = []
+        sample = None
+        for subject_id in subjects:
+            subject = self.load_subject(subject_id)
+            if sample is None:
+                sample = subject
+            levels = subject.protocol_levels
+            if levels is None or np.asarray(levels).size == 0:
+                subjects_missing_steps.append(subject_id)
+            else:
+                subjects_with_steps.append(subject_id)
 
-        # Check all subjects for protocol levels
-        has_protocol = sample.protocol_levels is not None
+        if sample is None:
+            raise ValueError("No subjects available to describe dataset")
+
+        has_protocol = len(subjects_with_steps) > 0
 
         return DataCard(
             name=self.data_path.name,
@@ -196,6 +242,8 @@ class LocalNpzAdapter(DatasetAdapter):
             sampling_rates=sample.sampling_rates,
             has_protocol_levels=has_protocol,
             subjects=subjects,
+            subjects_with_steps=subjects_with_steps,
+            subjects_missing_steps=subjects_missing_steps,
             metadata={
                 "format": "npz",
                 "sample_shapes": {k: v.shape for k, v in sample.signals.items()},

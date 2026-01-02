@@ -10,12 +10,12 @@ The `LocalNpzAdapter` expects a directory with one `.npz` file per subject:
 
 ```
 data/
-├── README.md           # This file
-└── raw/                # Raw dataset directory
-    ├── subject001.npz
-    ├── subject002.npz
-    ├── subject003.npz
-    └── ...
+  README.md           # This file
+  raw/                # Raw dataset directory
+    subject001.npz
+    subject002.npz
+    subject003.npz
+    ...
 ```
 
 ### NPZ File Contents
@@ -24,8 +24,8 @@ Each `.npz` file **MUST** contain:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `ppg` | `np.ndarray` | PPG signal array, shape `(N,)` or `(N, channels)` |
-| `bioz` | `np.ndarray` | Bioimpedance signal array |
+| `ppg` | `np.ndarray` | PPG signal array, shape `(N,)` or `(1, N)` |
+| `bioz` | `np.ndarray` | Bioimpedance signal array, shape `(N,)` or `(1, N)` |
 | `fs_ppg` | `float` | PPG sampling rate in Hz |
 | `fs_bioz` | `float` | Bioimpedance sampling rate in Hz |
 
@@ -35,7 +35,18 @@ Optional fields:
 |-------|------|-------------|
 | `t` | `np.ndarray` | Timestamps array |
 | `step` | `np.ndarray` | Protocol step/level array (aligned in time) |
+| `t_step` | `np.ndarray` | Timestamps aligned with `step` (if different from `t`) |
 | `metadata` | `dict` | Additional metadata dictionary |
+
+Note: multi-channel signals are not supported in v0.x. Select a single channel
+or average before saving.
+
+### Step Alignment Contract
+
+- If `step` is provided, it must be aligned with `t` (same length), or provide
+  its own `t_step` (same length as `step`).
+- If no timestamps are provided, `step` length must match the reference signal
+  length after resampling, otherwise preprocessing will raise an error.
 
 ### Example: Creating a Valid Dataset
 

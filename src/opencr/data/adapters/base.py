@@ -23,7 +23,8 @@ class SubjectData:
                  Example: {"ppg": np.array(...), "bioz": np.array(...)}
         sampling_rates: Dictionary mapping signal names to their sampling rates (Hz).
                         Example: {"ppg": 100.0, "bioz": 50.0}
-        timestamps: Optional dictionary mapping signal names to timestamp arrays.
+        timestamps: Optional dictionary mapping signal names or "t"/"t_step"
+            to timestamp arrays.
         protocol_levels: Optional array of protocol levels/steps aligned in time.
         metadata: Additional metadata about the subject or recording.
     """
@@ -53,6 +54,8 @@ class DataCard:
     sampling_rates: dict[str, float]
     has_protocol_levels: bool
     subjects: list[str]
+    subjects_with_steps: list[str] = field(default_factory=list)
+    subjects_missing_steps: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,6 +70,8 @@ class DataCard:
             "sampling_rates": self.sampling_rates,
             "has_protocol_levels": self.has_protocol_levels,
             "subjects": self.subjects,
+            "subjects_with_steps": self.subjects_with_steps,
+            "subjects_missing_steps": self.subjects_missing_steps,
             "metadata": self.metadata,
         }
 

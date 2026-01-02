@@ -230,6 +230,43 @@ class TestPipeline:
         assert result.valid_mask.shape[0] == result.X.shape[0]
         assert len(result.timestamps) == result.X.shape[0]
 
+    def test_step_resample_with_t_step_and_mismatched_fs(self) -> None:
+        """Resample step labels by time when signals have different sampling rates."""
+        fs_ppg = 100.0
+        fs_bioz = 50.0
+        duration = 12.0
+
+        t_ppg = np.arange(int(fs_ppg * duration)) / fs_ppg
+        t_bioz = np.arange(int(fs_bioz * duration)) / fs_bioz
+        ppg = np.sin(2 * np.pi * 1.2 * t_ppg)
+        bioz = np.sin(2 * np.pi * 0.3 * t_bioz)
+
+        t_step = np.arange(0.0, duration, 1.0)
+        step = np.where(t_step < 6.0, 0, 1).astype(np.int64)
+
+        subject = SubjectData(
+            subject_id="s1",
+            signals={"ppg": ppg, "bioz": bioz},
+            sampling_rates={"ppg": fs_ppg, "bioz": fs_bioz},
+            timestamps={"t_step": t_step},
+            protocol_levels=step,
+        )
+
+        config = PreprocessingConfig(
+            window_sec=1.0,
+            stride_sec=1.0,
+            filter_low_hz=None,
+            filter_high_hz=None,
+            bioz_filter_low_hz=None,
+            bioz_filter_high_hz=None,
+        )
+        pipeline = PreprocessingPipeline(config)
+        result = pipeline.process_subject(subject)
+
+        assert result.y_step is not None
+        assert result.y_step[2] == 0
+        assert result.y_step[8] == 1
+
     def test_bioz_resp_preserved(self) -> None:
         """Test BioZ respiration content survives preprocessing filter."""
         fs = 100.0
@@ -286,6 +323,129 @@ class TestPipeline:
                 assert data["y_opencr"].shape == data["y_step"].shape
                 assert data["y_ord"].shape == data["y_step"].shape
 
+    def test_pipeline_subject_without_steps(self, tmp_path: Path) -> None:
+        """Process subjects without steps and leave targets empty."""
+        from opencr.data.adapters import LocalNpzAdapter
+
+        fs_ppg = 100.0
+        fs_bioz = 50.0
+        duration = 20
+
+        for subject_id, include_steps in [
+            ("subject001", True),
+            ("subject002", True),
+            ("subject003", False),
+        ]:
+            t_ppg = np.arange(int(fs_ppg * duration)) / fs_ppg
+            t_bioz = np.arange(int(fs_bioz * duration)) / fs_bioz
+            ppg = np.sin(2 * np.pi * 1.2 * t_ppg)
+            bioz = np.sin(2 * np.pi * 0.3 * t_bioz)
+
+            payload = {
+                "ppg": ppg.astype(np.float64),
+                "bioz": bioz.astype(np.float64),
+                "fs_ppg": fs_ppg,
+                "fs_bioz": fs_bioz,
+            }
+            if include_steps:
+                step = np.repeat([1, 2, 3, 4], len(t_ppg) // 4)
+                if len(step) < len(t_ppg):
+                    step = np.concatenate([step, np.full(len(t_ppg) - len(step), 4)])
+                payload["step"] = step
+
+            np.savez(tmp_path / f"{subject_id}.npz", **payload)
+
+        adapter = LocalNpzAdapter(tmp_path)
+        config = PreprocessingConfig(window_sec=10.0, stride_sec=10.0)
+        pipeline = PreprocessingPipeline(config)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            stats = pipeline.process_dataset(adapter, output_dir)
+
+            assert "subject003" in stats["subjects_missing_steps"]
+
+            with np.load(output_dir / "processed" / "subject003.npz", allow_pickle=True) as data:
+                assert data["X"].size > 0
+                assert data["y_step"].size == 0
+                assert data["y_opencr"].size == 0
+                assert data["y_ord"].size == 0
+
+    def test_pipeline_rejects_multichannel_signals(self) -> None:
+        """Reject multi-channel signals during preprocessing."""
+        fs = 100.0
+        n_samples = 500
+        ppg = np.random.randn(2, n_samples)
+        bioz = np.random.randn(n_samples)
+
+        subject = SubjectData(
+            subject_id="s1",
+            signals={"ppg": ppg, "bioz": bioz},
+            sampling_rates={"ppg": fs, "bioz": fs},
+        )
+
+        config = PreprocessingConfig(window_sec=1.0, stride_sec=1.0)
+        pipeline = PreprocessingPipeline(config)
+
+        with pytest.raises(ValueError, match="Multichannel not supported"):
+            pipeline.process_subject(subject)
+
+    def test_global_target_map_consistent(self, tmp_path: Path) -> None:
+        """Global target mapping is consistent across subjects with missing steps."""
+        from opencr.data.adapters import LocalNpzAdapter
+
+        fs = 100.0
+        step_sec = 10
+        samples_per_step = int(fs * step_sec)
+
+        def write_subject(subject_id: str, steps: list[int]) -> None:
+            n_samples = len(steps) * samples_per_step
+            t = np.arange(n_samples) / fs
+            ppg = np.sin(2 * np.pi * 1.2 * t)
+            bioz = np.sin(2 * np.pi * 0.3 * t)
+            step = np.repeat(steps, samples_per_step)
+            np.savez(
+                tmp_path / f"{subject_id}.npz",
+                ppg=ppg.astype(np.float64),
+                bioz=bioz.astype(np.float64),
+                fs_ppg=fs,
+                fs_bioz=fs,
+                step=step,
+            )
+
+        write_subject("subjA", [1, 2, 3, 4])
+        write_subject("subjB", [2, 3, 4])
+
+        adapter = LocalNpzAdapter(tmp_path)
+        config = PreprocessingConfig(window_sec=10.0, stride_sec=10.0)
+        pipeline = PreprocessingPipeline(config)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            pipeline.process_dataset(adapter, output_dir)
+
+            with open(output_dir / "target_map.json", encoding="utf-8") as f:
+                target_map = json.load(f)
+
+            assert target_map["global_min_step"] == 1.0
+            assert target_map["global_max_step"] == 4.0
+            assert target_map["ordinal"]["mode"] == "levels"
+            assert target_map["ordinal"]["levels_unique_sorted"] == [1.0, 2.0, 3.0, 4.0]
+
+            def load_subject(subject_id: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                path = output_dir / "processed" / f"{subject_id}.npz"
+                with np.load(path, allow_pickle=True) as data:
+                    return data["y_step"], data["y_opencr"], data["y_ord"]
+
+            expected_opencr = (4.0 - 2.0) / (4.0 - 1.0) * 100.0
+
+            for subject_id in ("subjA", "subjB"):
+                y_step, y_opencr, y_ord = load_subject(subject_id)
+                mask = y_step == 2
+                assert mask.any()
+                assert np.allclose(y_opencr[mask], expected_opencr)
+                assert np.all(y_ord[mask] == 1)
+
 
 class TestPreprocessCLI:
     """Tests for CLI preprocess command."""
@@ -330,6 +490,7 @@ class TestPreprocessCLI:
             assert result.returncode == 0
             assert (output_dir / "processed").exists()
             assert (output_dir / "config.json").exists()
+            assert (output_dir / "target_map.json").exists()
             manifest_path = output_dir / "manifest.json"
             assert manifest_path.exists()
             with open(manifest_path, encoding="utf-8") as f:
@@ -337,3 +498,68 @@ class TestPreprocessCLI:
             assert manifest["stage"] == "preprocess"
             assert "dataset_hash" in manifest
             assert "config" in manifest
+            assert manifest["target_map_source"] == "dataset_global"
+            assert manifest["protocol_levels"] is None
+
+    def test_preprocess_protocol_json(self, tmp_path: Path) -> None:
+        """protocol.json should drive target_map source and levels."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        fs_ppg = 100.0
+        fs_bioz = 100.0
+        duration = 20  # seconds
+        n_samples = int(fs_ppg * duration)
+
+        for subject_id in ["subj001", "subj002"]:
+            t = np.arange(n_samples) / fs_ppg
+            ppg = np.sin(2 * np.pi * 1.2 * t)
+            bioz = np.sin(2 * np.pi * 0.3 * t)
+            step = np.repeat([0, -15], n_samples // 2)
+            if len(step) < n_samples:
+                step = np.concatenate([step, np.full(n_samples - len(step), -15)])
+
+            np.savez(
+                data_dir / f"{subject_id}.npz",
+                ppg=ppg.astype(np.float64),
+                bioz=bioz.astype(np.float64),
+                fs_ppg=fs_ppg,
+                fs_bioz=fs_bioz,
+                step=step.astype(np.float64),
+            )
+
+        protocol = {"levels": [0, -15, -30], "direction": "more_severe_lower"}
+        with open(data_dir / "protocol.json", "w", encoding="utf-8") as f:
+            json.dump(protocol, f)
+
+        output_dir = tmp_path / "output"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "opencr",
+                "data",
+                "preprocess",
+                str(data_dir),
+                "--output",
+                str(output_dir),
+                "--window-sec",
+                "5",
+                "--stride-sec",
+                "5",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0
+
+        with open(output_dir / "target_map.json", encoding="utf-8") as f:
+            target_map = json.load(f)
+        assert target_map["source"] == "protocol"
+        assert target_map["global_min_step"] == -30.0
+
+        with open(output_dir / "manifest.json", encoding="utf-8") as f:
+            manifest = json.load(f)
+        assert manifest["target_map_source"] == "protocol"
+        assert manifest["protocol_levels"] == [0.0, -15.0, -30.0]

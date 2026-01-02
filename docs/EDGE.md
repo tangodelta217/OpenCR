@@ -19,8 +19,18 @@ The current implementation supports standard machine learning models (Random For
 
 3. **Budget Estimation**
    - Automatically generates `edge_budget.json`.
-   - Estimates: RAM usage, Model Size, Inference Latency.
+   - Estimates/measures: Model Size, Flash usage, Inference Latency.
+   - RAM usage is not measured for baseline sklearn exports (reported as unknown).
    - Includes "Plan B" (Playback strategy) data structure.
+
+### Budget Semantics (P0)
+- **Flash**: measured as the total size of exported model artifact + `export_manifest.json`.
+- **Latency**: estimated from feature count (heuristic).
+- **RAM**: unknown for baseline sklearn exports (no runtime measurement).
+- **meets_budget**:
+  - `true` only if latency/flash/ram are all known and pass.
+  - `false` if any dimension fails.
+  - `null` if any dimension is unknown.
 
 ---
 

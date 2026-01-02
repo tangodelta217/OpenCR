@@ -38,6 +38,28 @@ pip install -e ".[dev]"
 python -m opencr --help
 ```
 
+## Quickstart Windows (PowerShell)
+
+```powershell
+git clone https://github.com/your-org/opencr.git
+cd opencr
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+python -m opencr --help
+```
+
+## Quick demo (synthetic dataset)
+
+```powershell
+python gen_data.py --output data/demo --n-subjects 4 --duration-sec 600 --fs 100
+python run_all.py data/demo --run-dir runs/demo --report-dir docs
+```
+
+Outputs:
+- `runs/demo/` (fetch, preprocess, baseline artifacts + manifests)
+- `docs/figures/annexA` and `docs/tables/annexA`
+
 ## Manual Installation
 
 ```bash
@@ -57,6 +79,20 @@ pip install -e ".[dev]"
 opencr --help
 ```
 
+## Dev setup (Windows-friendly)
+
+Dev extras include `pytest`, `ruff`, `black`, and `pre-commit`.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+
+python -m pytest
+python -m ruff check src tests
+python -m black --check src tests
+```
+
 ## Development
 
 ```bash
@@ -73,11 +109,11 @@ make test
 make check
 
 # If make is not available (e.g., Windows)
-ruff check --fix src tests
-black src tests
-ruff check src tests
-black --check src tests
-pytest
+python -m ruff check --fix src tests
+python -m black src tests
+python -m ruff check src tests
+python -m black --check src tests
+python -m pytest
 ```
 
 ## Project Structure
@@ -102,6 +138,20 @@ OpenCR/
   data/                # Dataset references (gitignored)
   runs/                # Experiment outputs (gitignored)
 ```
+
+## Signal Format
+
+PPG and BioZ inputs are single-channel per subject. Supported shapes are
+`(T,)` or `(1, T)`. Multi-channel inputs are rejected in v0.x; select a
+channel or average before loading.
+
+## Targets
+
+Preprocessing builds a dataset-level target map (`target_map.json`) from all
+available protocol steps. This keeps `y_opencr` and `y_ord` on a consistent
+global scale across subjects instead of per-subject rescaling. Subjects missing
+steps are recorded in the preprocess manifest and training fails early if a
+step-based target is requested.
 
 ## Anti-Leakage Policy
 

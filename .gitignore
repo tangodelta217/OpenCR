@@ -52,6 +52,9 @@ data/*
 !data/README.md
 runs/*
 !runs/.gitkeep
+docs/figures/
+docs/tables/
+docs/manifest.json
 
 # Model artifacts
 *.onnx

@@ -33,9 +33,20 @@ def main() -> None:
     parser.add_argument("--resample-hz", type=float, default=None, help="Resample Hz")
     parser.add_argument("--sqi-threshold", type=float, default=0.5, help="SQI threshold")
     parser.add_argument(
+        "--report-dir",
+        default=None,
+        help="Report output directory (default: <run-dir>/report)",
+    )
+    parser.add_argument(
         "--data-hash",
-        default="metadata",
-        help="Dataset hash method: metadata, content, none",
+        default="hybrid",
+        help="Dataset hash method: stable, metadata, content, hybrid, none",
+    )
+    parser.add_argument(
+        "--data-hash-threshold-mb",
+        type=float,
+        default=200.0,
+        help="Hybrid hash threshold in MB",
     )
 
     args = parser.parse_args()
@@ -46,7 +57,7 @@ def main() -> None:
     fetch_dir = run_dir / "fetch"
     preprocess_dir = run_dir / "preprocess"
     baseline_dir = run_dir / "baseline"
-    report_dir = run_dir / "report"
+    report_dir = Path(args.report_dir) if args.report_dir else run_dir / "report"
 
     data_card_path = fetch_dir / "data_card.json"
     processed_dir = preprocess_dir / "processed"
@@ -82,6 +93,8 @@ def main() -> None:
         str(data_card_path),
         "--data-hash",
         args.data_hash,
+        "--data-hash-threshold-mb",
+        str(args.data_hash_threshold_mb),
     ]
     if args.resample_hz is not None:
         preprocess_cmd.extend(["--resample-hz", str(args.resample_hz)])

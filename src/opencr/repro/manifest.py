@@ -44,16 +44,19 @@ def _hash_file_contents(path: Path, hasher: hashlib._Hash) -> None:
 
 def compute_dataset_hash(
     root_dir: Path,
-    method: str = "metadata",
+    method: str = "stable",
     pattern: str = "*.npz",
+    *,
+    threshold_bytes: int | None = None,
 ) -> dict[str, Any] | None:
     """
     Compute a reproducible dataset hash.
 
     Args:
         root_dir: Directory containing dataset files.
-        method: "metadata", "content", or "none".
+        method: "metadata", "stable", "content", "hybrid", or "none".
         pattern: File glob pattern to include.
+        threshold_bytes: Size threshold for hybrid mode (bytes).
 
     Returns:
         Dictionary with hash metadata, or None if disabled.
@@ -61,18 +64,29 @@ def compute_dataset_hash(
     method = method.lower()
     if method == "none":
         return None
-    if method not in {"metadata", "content"}:
+    if method not in {"metadata", "stable", "content", "hybrid"}:
         raise ValueError(f"Unknown hash method: {method}")
 
     root_dir = Path(root_dir)
     files = sorted(root_dir.rglob(pattern))
+    total_bytes = sum(path.stat().st_size for path in files)
+
+    effective_method = method
+    if method == "hybrid":
+        if threshold_bytes is None:
+            threshold_bytes = 200 * 1024 * 1024
+        effective_method = "content" if total_bytes <= threshold_bytes else "stable"
 
     hasher = hashlib.sha256()
     for path in files:
         rel_path = str(path.relative_to(root_dir))
-        if method == "metadata":
+        if effective_method == "metadata":
             stat = path.stat()
             record = f"{rel_path}|{stat.st_size}|{stat.st_mtime_ns}"
+            hasher.update(record.encode("utf-8"))
+        elif effective_method == "stable":
+            stat = path.stat()
+            record = f"{rel_path}|{stat.st_size}"
             hasher.update(record.encode("utf-8"))
         else:
             hasher.update(rel_path.encode("utf-8"))
@@ -80,6 +94,9 @@ def compute_dataset_hash(
 
     return {
         "method": method,
+        "effective_method": effective_method,
+        "threshold_bytes": threshold_bytes if method == "hybrid" else None,
+        "total_bytes": total_bytes,
         "value": hasher.hexdigest(),
         "n_files": len(files),
         "pattern": pattern,
