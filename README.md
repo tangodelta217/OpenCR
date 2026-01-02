@@ -68,6 +68,18 @@ Outputs:
 python -m opencr demo fuel-gauge --duration 10 --ascii
 ```
 
+## Data policy
+
+- Do not commit datasets or generated artifacts. Keep inputs in `data/` and outputs in `runs/`.
+- Generated reports in `docs/figures/` and `docs/tables/` are local outputs. Only place static assets in
+  `docs/assets/`.
+
+## Limitations
+
+- Edge export uses a pickle stub if ONNX tooling is not installed. Install `skl2onnx` to enable ONNX export.
+- Baseline sklearn edge exports do not report RAM usage, so RAM budgets may be shown as unknown.
+- Small-sample folds can emit `UndefinedMetricWarning` for R^2 in synthetic/demo runs; tests still pass.
+
 ## Manual Installation
 
 ```bash
