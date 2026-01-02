@@ -1,0 +1,109 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opencr"
+version = "0.1.0"
+description = "OpenCR: Open Cognitive Radio - Professional ML/Signal Processing Pipeline"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "OpenCR Team"}
+]
+keywords = ["cognitive-radio", "signal-processing", "machine-learning", "edge-ai"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "typer[all]>=0.9.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "scikit-learn>=1.3.0",
+    "joblib>=1.3.0",
+    "matplotlib>=3.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1.0",
+    "black>=23.0.0",
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pre-commit>=3.5.0",
+]
+ml = [
+    "torch>=2.0.0",
+    "scikit-learn>=1.3.0",
+    "onnx>=1.14.0",
+    "onnxruntime>=1.16.0",
+]
+
+[project.scripts]
+opencr = "opencr.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/opencr/opencr"
+Documentation = "https://github.com/opencr/opencr#readme"
+Repository = "https://github.com/opencr/opencr"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by black)
+    "B008",   # do not perform function calls in argument defaults
+    "ARG001", # unused function argument (Typer handles args via decorators)
+    "SIM108", # ternary operator suggestion (prefer readable conditionals)
+    "SIM105", # contextlib.suppress suggestion (prefer explicit try/except)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["opencr"]
+
+[tool.black]
+target-version = ["py311"]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src/opencr"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
