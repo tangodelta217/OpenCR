@@ -6,8 +6,8 @@ Thank you for your interest in contributing to OpenCR!
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/your-org/opencr.git
-   cd opencr
+   git clone https://github.com/tangodelta217/OpenCR.git
+   cd OpenCR
    ```
 
 2. **Initialize environment**

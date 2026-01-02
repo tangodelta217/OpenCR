@@ -3,7 +3,7 @@
 Open Compensatory Reserve (OpenCR) is a reproducible ML/signal processing pipeline to
 estimate the Compensatory Reserve Index (0-100) from PPG and bioimpedance signals.
 
-[![CI](https://github.com/your-org/opencr/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/opencr/actions/workflows/ci.yml)
+[![CI](https://github.com/tangodelta217/OpenCR/actions/workflows/ci.yml/badge.svg)](https://github.com/tangodelta217/OpenCR/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
@@ -21,7 +21,7 @@ estimate the Compensatory Reserve Index (0-100) from PPG and bioimpedance signal
 
 ```bash
 # 1. Clone
-git clone https://github.com/your-org/opencr.git && cd opencr
+git clone https://github.com/tangodelta217/OpenCR.git && cd OpenCR
 
 # 2. Create venv
 python -m venv .venv
@@ -41,8 +41,8 @@ python -m opencr --help
 ## Quickstart Windows (PowerShell)
 
 ```powershell
-git clone https://github.com/your-org/opencr.git
-cd opencr
+git clone https://github.com/tangodelta217/OpenCR.git
+cd OpenCR
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
@@ -54,11 +54,19 @@ python -m opencr --help
 ```powershell
 python gen_data.py --output data/demo --n-subjects 4 --duration-sec 600 --fs 100
 python run_all.py data/demo --run-dir runs/demo --report-dir docs
+# Add --with-edge to also run edge export + benchmark.
 ```
 
 Outputs:
 - `runs/demo/` (fetch, preprocess, baseline artifacts + manifests)
 - `docs/figures/annexA` and `docs/tables/annexA`
+- With `--with-edge`: `runs/demo/edge` (export manifest, budget, benchmark)
+
+## ASCII-safe demo (Windows-friendly)
+
+```powershell
+python -m opencr demo fuel-gauge --duration 10 --ascii
+```
 
 ## Manual Installation
 

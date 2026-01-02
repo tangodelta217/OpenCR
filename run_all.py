@@ -48,6 +48,11 @@ def main() -> None:
         default=200.0,
         help="Hybrid hash threshold in MB",
     )
+    parser.add_argument(
+        "--with-edge",
+        action="store_true",
+        help="Run edge export and benchmark after report generation",
+    )
 
     args = parser.parse_args()
     data_dir = Path(args.data_dir)
@@ -137,6 +142,33 @@ def main() -> None:
             str(report_dir),
         ]
     )
+
+    if args.with_edge:
+        edge_dir = run_dir / "edge"
+        run_command(
+            base_cmd
+            + [
+                "edge",
+                "export",
+                "--run",
+                str(baseline_dir),
+                "--out",
+                str(edge_dir),
+                "--format",
+                "auto",
+            ]
+        )
+        run_command(
+            base_cmd
+            + [
+                "edge",
+                "benchmark",
+                "--run",
+                str(baseline_dir),
+                "--out",
+                str(edge_dir),
+            ]
+        )
 
     print(f"[run_all] Completed. Outputs in {run_dir}")
 
