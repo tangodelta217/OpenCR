@@ -17,6 +17,23 @@ estimate the Compensatory Reserve Index (0-100) from PPG and bioimpedance signal
 - Edge-ready: ONNX export or pickle stub, budgets, host benchmarks (no int8 for baseline)
 - Demo-ready: fuel-gauge visualization anyone understands in 20 seconds
 
+<p align="center">
+  <strong>Demo Output (ASCII mode):</strong>
+</p>
+
+```
++----------------------- OpenCR -----------------------+
+
++--------------------- Fuel Gauge ---------------------+
+| Sample: 4/4                                          |
+|                                                      |
+| CRI: 72%                                             |
+| ######################--------                       |
+|                                                      |
+| Status: STABLE                                       |
++------------------------------------------------------+
+```
+
 ## Quickstart
 
 ```bash
