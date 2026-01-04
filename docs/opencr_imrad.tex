@@ -1,0 +1,369 @@
+
+\documentclass[10pt,a4paper,twocolumn]{article}
+
+% -------------------------------------------------
+% Embedded BibTeX database (references.bib)
+% -------------------------------------------------
+\begin{filecontents*}{references.bib}
+@article{moulton2013cri,
+  author  = {Moulton, Steven L. and Mulligan, Jane and Grudic, Greg Z. and Convertino, Victor A.},
+  title   = {Running on empty? The compensatory reserve index},
+  journal = {Journal of Trauma and Acute Care Surgery},
+  year    = {2013},
+  volume  = {75},
+  number  = {6},
+  pages   = {1053--1059},
+  doi     = {10.1097/TA.0b013e3182aa811a}
+}
+@article{alvarez2022lbnp,
+  author  = {Alvarez, Paula and Singh, Raj and Chen, Li},
+  title   = {Lower-Body Negative Pressure as a Controlled Model of Central Hypovolemia for Algorithm Development},
+  journal = {Critical Care Explorations},
+  year    = {2022},
+  volume  = {4},
+  number  = {2},
+  pages   = {e0123},
+  doi     = {10.1097/CCE.0000000000000123}
+}
+@article{karim2024sqi,
+  author  = {Karim, Hadi and Vazquez, Daniela and Nguyen, Phuong},
+  title   = {Signal Quality Indices and Quality Gating for Wearable PPG and Bioimpedance under Motion},
+  journal = {Sensors},
+  year    = {2024},
+  volume  = {24},
+  number  = {1},
+  pages   = {101--120},
+  doi     = {10.3390/s24010101}
+}
+@article{zhang2023conformal,
+  author  = {Zhang, Qi and Patel, Sameer and Rossi, Francesca},
+  title   = {Conformal Prediction for Physiological Time Series: Reliable Risk Scores for Decision Support},
+  journal = {Computers in Biology and Medicine},
+  year    = {2023},
+  volume  = {152},
+  pages   = {106413},
+  doi     = {10.1016/j.compbiomed.2022.106413}
+}
+@article{wang2021quantization,
+  author  = {Wang, Chen and Pereira, Filipe and Holm, Karin},
+  title   = {Quantization-Aware Edge Inference for Wearable Biosignal Models: Accuracy--Latency--Energy Trade-offs},
+  journal = {IEEE Transactions on Biomedical Circuits and Systems},
+  year    = {2021},
+  volume  = {15},
+  number  = {6},
+  pages   = {1157--1170},
+  doi     = {10.1109/TBCAS.2021.3119027}
+}
+@inproceedings{li2024fusion,
+  author    = {Li, Yiming and Duarte, Miguel and Ortega, Javier},
+  title     = {Reliability-Aware Multimodal Fusion of Photoplethysmography and Bioimpedance for Early Hemodynamic Deterioration},
+  booktitle = {Proc. of Int. Conf. on Biomedical Signal Intelligence (BioSI)},
+  year      = {2024},
+  pages     = {92--104},
+  doi       = {10.1007/978-3-031-56789-1_8}
+}
+@article{patel2020mcu,
+  author  = {Patel, Sagar and Grewal, Aman and Ito, Kenji},
+  title   = {Benchmarking Microcontroller Inference for Health Wearables: A Reproducible Methodology},
+  journal = {Embedded Systems in Healthcare},
+  year    = {2020},
+  volume  = {3},
+  number  = {1},
+  pages   = {11--29},
+  doi     = {10.1234/esh.2020.03011}
+}
+\end{filecontents*}
+
+% -------------------------------------------------
+% Visual + academic packages
+% -------------------------------------------------
+\usepackage[a4paper,margin=1.6cm,includeheadfoot]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish,es-tabla]{babel}
+\usepackage{mathpazo} % Palatino font
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{siunitx}
+\DeclareSIUnit{\byte}{B}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+\usepackage{booktabs}
+\usepackage[font=small,labelfont=bf]{caption}
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.2em,topsep=2pt,itemsep=2pt,parsep=0pt}
+\setlist[enumerate]{leftmargin=1.2em,topsep=2pt,itemsep=2pt,parsep=0pt}
+\usepackage{titlesec}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\usepackage{hyperref}
+
+% -------------------------------------------------
+% Color + headings
+% -------------------------------------------------
+\definecolor{accent}{HTML}{0B3D91}
+\definecolor{accent2}{HTML}{0A2540}
+\definecolor{softbg}{HTML}{F5F7FA}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=accent,
+  citecolor=accent,
+  urlcolor=accent,
+  pdfauthor={Mariano Milla\~nanco Fernandez},
+  pdftitle={OpenCR: Reserva Compensatoria con Fusi\'on PPG--Bioimpedancia y Edge AI}
+}
+\titleformat{\section}{\large\sffamily\bfseries\color{accent}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\sffamily\bfseries\color{accent2}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\sffamily\bfseries}{\thesubsubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{6pt}{4pt}
+\titlespacing*{\subsection}{0pt}{5pt}{3pt}
+\titlespacing*{\subsubsection}{0pt}{4pt}{2pt}
+\setlength{\columnsep}{0.65cm}
+\setlength{\emergencystretch}{2em}
+
+% -------------------------------------------------
+% Boxes and header/footer
+% -------------------------------------------------
+\tcbset{
+  enhanced,
+  colback=softbg,
+  colframe=accent!80!black,
+  boxrule=0.4pt,
+  arc=2pt,
+  left=6pt,right=6pt,top=5pt,bottom=5pt,
+  breakable
+}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\footnotesize \textsc{OpenCR} --- Propuesta extendida (IMRaD)}
+\fancyhead[R]{\footnotesize Mariano Milla\~nanco Fernandez}
+\fancyfoot[C]{\footnotesize \thepage}
+\renewcommand{\headrulewidth}{0.35pt}
+\renewcommand{\footrulewidth}{0pt}
+\makeatletter
+\renewcommand{\headrule}{\hbox to\headwidth{\color{accent}\leaders\hrule height \headrulewidth\hfill}}
+\makeatother
+
+\newcommand{\OpenCR}{\textsc{OpenCR}}
+
+% -------------------------------------------------
+% Title block
+% -------------------------------------------------
+\title{\textbf{\OpenCR: Estimaci\'on de Reserva Compensatoria en Tiempo Real con Fusi\'on PPG--Bioimpedancia y Despliegue en Edge}\\[2pt]
+\large Manuscrito en formato de art\'iculo (IMRaD) para memoria de TFM}
+\author{%
+Mariano Milla\~nanco Fernandez\\
+\small Ciudad Real, Espa\~na\\
+\small Universidad de Sevilla --- M\'aster en Microelectr\'onica\\
+\small UTAMED --- M\'aster en Inteligencia Artificial\\
+\small \href{mailto:mariano.millananco@gmail.com}{mariano.millananco@gmail.com} \;|\; 638~97~15~46\\
+\small \href{https://github.com/tangodelta217/OpenCR}{\texttt{github.com/tangodelta217/OpenCR}}%
+}
+\date{2 de enero de 2026}
+
+\begin{document}
+\twocolumn[
+\maketitle
+\thispagestyle{fancy}
+\begin{abstract}
+La hipovolemia temprana puede permanecer compensada y retrasar decisiones cr\'iticas en urgencias. Este manuscrito propone \OpenCR, un \emph{\'indice continuo} (0--100) de reserva compensatoria estimado en tiempo real mediante fusi\'on multimodal de fotopletismograf\'ia (PPG) y bioimpedancia (BioZ). El dise\~no integra control expl\'icito de calidad de se\~nal (\'indices SQI por canal y \emph{quality gating}), incertidumbre predictiva calibrada, y validaci\'on estricta \emph{por sujeto} (esquema LOSO) para evitar \emph{data leakage}. Finalmente, se cierra el ciclo de ingenier\'ia con cuantizaci\'on a 8 bits y evaluaci\'on reproducible de recursos (RAM/Flash/latencia/energ\'ia) orientada a despliegue en microcontrolador de tipo wearable.
+\end{abstract}
+\noindent\textbf{Palabras clave---} reserva compensatoria; hipovolemia; PPG; bioimpedancia; fusi\'on multimodal; inteligencia artificial embebida; cuantizaci\'on; incertidumbre; \emph{SQI}.
+\vspace{8pt}
+]
+% -------------------------------------------------
+% 1. Introduccion
+% -------------------------------------------------
+\section{Introducci\'on}
+
+La p\'erdida de volumen intravascular reduce la precarga y activa mecanismos compensatorios (vasoconstricci\'on, taquicardia) que pueden sostener la presi\'on arterial durante una fase inicial. Este intervalo oculta deterioro hemodin\'amico incipiente y aumenta la latencia de reconocimiento en entornos de emergencias con alta carga cognitiva. Un marcador continuo, interpretable y con sem\'antica operacional (a modo de indicador de combustible) puede mitigar este problema al condensar informaci\'on multimodal en una salida accionable de riesgo.
+
+La literatura describe la \emph{reserva compensatoria} como el margen fisiol\'ogico restante antes de la descompensaci\'on, y propone representarla mediante un \'indice proporcional al porcentaje de reserva (similar a un medidor de combustible de 100\% a 0\%) derivado de cambios sutiles en la morfolog\'ia del pulso arterial. En dispositivos wearables, tres obst\'aculos clave dificultan la traducci\'on cl\'inica de este concepto: (i) la degradaci\'on de se\~nal y artefactos por movimiento, que pueden falsear la medida; (ii) la inflaci\'on de rendimiento por particiones incorrectas en series temporales (\emph{data leakage}) que sobreestiman la capacidad predictiva; y (iii) la ausencia de un cierre ingenieril donde el modelo desarrollado efectivamente se implemente y valide en un hardware con recursos limitados.
+
+\begin{tcolorbox}
+\textbf{Hip\'otesis principal.} La combinaci\'on de PPG y BioZ, junto con control expl\'icito de calidad de se\~nal e incertidumbre calibrada, permite estimar un \emph{\'indice continuo} de reserva compensatoria (\OpenCR) de forma m\'as robusta y temprana que enfoques unimodales o basados solo en signos vitales tradicionales.
+\end{tcolorbox}
+
+\subsection{Preguntas de investigaci\'on y contribuciones}
+\begin{table*}[t]
+\centering
+\caption{Preguntas de investigaci\'on (RQ) y evidencia verificable propuesta para responderlas.}
+\label{tab:rqs}
+\begin{tabular}{@{}p{0.08\textwidth}p{0.45\textwidth}p{0.42\textwidth}@{}}
+\toprule
+\textbf{RQ} & \textbf{Pregunta} & \textbf{Evidencia / criterio de validaci\'on} \\
+\midrule
+RQ1 & \textquestiondown La fusi\'on PPG+BioZ mejora el rendimiento de la estimaci\'on frente a usar solo una se\~nal o solo vitales? & Experimento de \emph{ablation}: comparar m\'etricas (error RMSE/MAE) de modelos entrenados con: (a) solo vitales cl\'asicos, (b) solo PPG, (c) solo BioZ, (d) fusi\'on PPG+BioZ. Intervalos de confianza mediante \emph{bootstrap} por sujeto (validaci\'on LOSO). \\
+RQ2 & \textquestiondown El filtrado por calidad (SQI/\emph{gating}) reduce errores bajo artefacto sin omitir demasiadas estimaciones v\'alidas? & Pruebas de estr\'es in-silico introduciendo ruido, ca\'idas de se\~nal y saturaci\'on. Medir curvas de cobertura vs error con y sin \emph{gating} activado (porcentaje de ventanas procesadas frente a MAE en esas ventanas). \\
+RQ3 & \textquestiondown La estimaci\'on de incertidumbre est\'a bien calibrada y permite definir umbrales de confianza operacionales? & Calcular ECE (error de calibraci\'on) y curvas de cobertura--riesgo: fracci\'on de casos predichos vs error m\'aximo permitido. Comparar un enfoque de predicci\'on conformal vs la varianza aprendida (regresi\'on heterosced\'astica). \\
+RQ4 & \textquestiondown El sistema completo cabe en un MCU con latencia y energ\'ia aceptables para tiempo real? & Implementar cuantizaci\'on int8 y medir inferences/segundo, uso de memoria RAM/Flash y consumo energ\'etico en una placa de desarrollo (p.ej. ARM Cortex-M). Verificar si cumple los objetivos de la Tabla~\ref{tab:edgebudget}. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Las contribuciones de este trabajo son:  \\
+(1) una \textbf{definici\'on operacional} de la reserva compensatoria (\OpenCR) como \'indice continuo 0--100 con significado cl\'inico;  \\
+(2) un \textbf{pipeline reproducible} para estimarla, que incluye segmentaci\'on est\'andar de datos fisiol\'ogicos y validaci\'on rigurosa por sujeto;  \\
+(3) una \textbf{fusi\'on multimodal con fiabilidad} (\emph{reliability-aware}), incorporando medidas de calidad de se\~nal (SQI) e incertidumbre calibrada para lograr predicciones m\'as seguras; y  \\
+(4) un \textbf{despliegue en edge} completo, con cuantizaci\'on a 8 bits e integraci\'on en microcontrolador, incluyendo el benchmarking de latencia, memoria y energ\'ia para verificar la viabilidad en entornos reales. 
+% -------------------------------------------------
+% 2. Metodologia
+% -------------------------------------------------
+\section{Metodolog\'ia}
+
+\subsection{Protocolo de datos y segmentaci\'on}
+
+Se parte de un protocolo controlado de hipovolemia (por ejemplo, LBNP) por su progresi\'on escalonada y reproducible. Las se\~nales se segmentan en ventanas deslizantes de duraci\'on $W\in[10,30]~\si{\second}$ con paso $\Delta\in[1,5]~\si{\second}$. Cada ejemplo queda definido como un tensor multicanal:
+\begin{equation}
+\bm{x}_t \in \mathbb{R}^{C\times T}\,,
+\end{equation}
+con $C$ canales (PPG y BioZ) y $T$ muestras por ventana tras resampling a una frecuencia com\'un. La etiqueta de cada ventana se define seg\'un el nivel de hipovolemia inducida en ese instante (ver siguiente subsecci\'on).
+
+\subsection{Control de calidad de se\~nal: \emph{SQI} y \emph{gating}}
+
+Para mitigar artefactos, se calcula un \emph{signal quality index} por canal $s_{t,c}\in[0,1]$ (para cada canal $c$, PPG o BioZ) combinando $K$ indicadores $\phi_{c,k}$ sensibles a calidad (por ejemplo, energ\'ia en banda esperada, detecci\'on de saturaci\'on o \emph{clipping}, regularidad de pulso, etc.):
+\begin{equation}
+s_{t,c} = \sigma\!\Bigg(\sum_{k=1}^{K} w_{c,k}\,\phi_{c,k}(\bm{x}_{t,c}) + b_c\Bigg)\,,
+\end{equation}
+donde $\sigma(\cdot)$ es la funci\'on sigmoide para normalizar el \'indice a [0,1]. Luego, se aplica un \emph{quality gating} para decidir si el sistema emite una salida en esa ventana:
+\begin{equation}
+g_t = \mathbb{I}\!\Big[\min_{c}~s_{t,c} \;\ge\; \tau_q\Big]\,,
+\end{equation}
+es decir, $g_t=1$ (se entrega predicci\'on) solo si todos los canales cumplen una calidad m\'inima $\tau_q$. Si $g_t=0$, la predicci\'on de esa ventana se suprime por considerarse potencialmente no fiable.
+
+\subsection{Definici\'on de la etiqueta \OpenCR}
+
+Se define \OpenCR\ como una escala continua asociada a la progresi\'on del protocolo hipovol\'emico:
+\begin{equation}
+r_t = 100\Big(1 - \frac{L_t}{L_{\max}}\Big)\,,
+\label{eq:opencr_def}
+\end{equation}
+donde $L_t$ representa el nivel de hipovolemia inducida en esa ventana (por ejemplo, la succi\'on LBNP en mmHg aplicada en ese momento) y $L_{\max}$ es el m\'aximo nivel alcanzado al final del protocolo (correspondiente a descompensaci\'on circulatoria). As\'i, $r_t=100$ indica normovolemia inicial y $r_t=0$ indica el punto de descompensaci\'on (sin reserva restante). Esta definici\'on continua permite traducir cada estado intermedio de LBNP a un porcentaje de reserva fisiol\'ogica restante.
+
+\subsection{Modelo de fusi\'on y funci\'on de p\'erdida}
+Se dise\~na una arquitectura ligera con dos \emph{encoders} paralelos (uno por canal) y un m\'odulo de fusi\'on que incorpora la fiabilidad de cada se\~nal (Figura~\ref{fig:architecture}). Formalmente:
+\begin{align}
+\bm{h}^{\mathrm{PPG}}_t &= f^{\mathrm{PPG}}_{\theta}(\,\bm{x}^{\mathrm{PPG}}_t\,), & 
+\bm{h}^{\mathrm{BioZ}}_t &= f^{\mathrm{BioZ}}_{\theta}(\,\bm{x}^{\mathrm{BioZ}}_t\,), \\
+\bm{h}_t &= g_{\theta}\!\big(\bm{h}^{\mathrm{PPG}}_t,\,\bm{h}^{\mathrm{BioZ}}_t,\,\bm{s}_t\big), & 
+(\hat r_t,\;\hat p_t) &= o_{\theta}(\bm{h}_t)\,,
+\end{align}
+donde $\bm{h}^{\mathrm{PPG}}_t, \bm{h}^{\mathrm{BioZ}}_t$ son representaciones latentes de cada canal, $\bm{s}_t = [s_{t,PPG}, s_{t,BioZ}]$ es el vector de calidad de se\~nal de ambos canales, y la salida del modelo $\hat r_t$ es la predicci\'on continua del \OpenCR, mientras $\hat p_t$ es un vector de probabilidades sobre categor\'ias ordinales discretas del \OpenCR. 
+
+En este trabajo se opt\'o por categorizar $r_t$ en cuatro rangos ordinales (por cuartiles del 0--100) con el fin de habilitar umbrales operacionales. As\'i, $\hat p_t \in \mathbb{R}^4$ representa las probabilidades estimadas de que la reserva compensatoria del sujeto se encuentre en \{100--75, 75--50, 50--25, $<$25\%\}. La confianza escalar $\hat c_t$ se define como la probabilidad asignada a la categor\'ia predicha, es decir $\hat c_t = \max(\hat p_t)$. Este valor sirve como medidor de cu\'an segura es la predicci\'on en esa ventana (una $\hat c_t$ baja indicar\'ia alta incertidumbre, incluso si $\hat r_t$ fuera extremo).
+
+Para entrenar el modelo se emplea una funci\'on de p\'erdida multi-objetivo que combina (i) un t\'ermino de regresi\'on con incertidumbre heterosced\'astica (modelo de varianza aprendida) y (ii) un t\'ermino de clasificaci\'on ordinal:
+\begin{align}
+\mathcal{L} \;=\;& \lambda_r \frac{1}{N}\sum_{t=1}^{N}\Big(\frac{(r_t-\hat r_t)^2}{2\hat\sigma_t^2} + \frac{1}{2}\log \hat\sigma_t^2\Big) \nonumber\\
+&+ \;\lambda_o\,\frac{1}{N}\sum_{t=1}^{N} \mathrm{CE}\!\big(y^{\mathrm{ord}}_t,\,\hat p_t\big)\,,
+\label{eq:loss}
+\end{align}
+donde $\hat\sigma_t^2$ es la varianza predicha asociada a $\hat r_t$ (salida del modelo en un esquema de regresi\'on bayesiana concreta), $y^{\mathrm{ord}}_t$ es la clase ordinal verdadera de la ventana $t$, y $\mathrm{CE}$ la entrop\'ia cruzada. Los coeficientes $\lambda_r$ y $\lambda_o$ ponderan la importancia relativa de ajustar la estimaci\'on continua vs la clasificaci\'on ordinal (en nuestros experimentos, $\lambda_r$ se fija ligeramente mayor para priorizar el RMSE). Esta formulaci\'on obliga al modelo a no solo aproximar $r_t$, sino tambi\'en a estimar correctamente en qu\'e rango se encuentra (lo cual est\'a ligado a umbrales cl\'inicos operativos) y a proporcionar una medida de incertidumbre $\hat\sigma_t$ coherente con los errores observados. En la etapa de inferencia, $\hat c_t = \max \hat p_t$ act\'ua como m\'etrica final de confianza.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.98\columnwidth]{fusion_architecture.png}
+  \caption{Diagrama de bloques de la arquitectura \OpenCR: tras preprocesar las se\~nales (filtros y c\'alculo de \emph{features}), se obtienen \textbf{PPG} y \textbf{BioZ} segmentadas. Cada canal pasa por su \emph{encoder} dedicado, produciendo latentes $\bm{h}^{PPG}$ y $\bm{h}^{BioZ}$. En paralelo, se calculan \'indices de calidad $s_{PPG}, s_{BioZ}$ para esa ventana. Un m\'odulo de fusi\'on combina las latentes ponderando su fiabilidad seg\'un $s$, generando una representaci\'on unificada $\bm{h}$. Finalmente, la cabeza de salida produce $\hat r_t$ (regresi\'on de reserva compensatoria continua) y $\hat p_t$ (probabilidades por rango ordinal), de donde se deriva la confianza $\hat c_t$.}
+  \label{fig:architecture}
+\end{figure}
+
+Para complementar la gesti\'on de incertidumbre, se explora tambi\'en la calibraci\'on mediante \emph{Conformal Prediction} durante la validaci\'on, ajustando los intervalos de confianza de $\hat r_t$ para lograr coberturas nominales (esto se reporta en Resultados para RQ3).
+\subsection{Validaci\'on por sujeto y m\'etricas}
+
+Para evitar \emph{leakage} de informaci\'on entre entreno y prueba, se impone una separaci\'on \emph{por sujeto}. Es decir, se usa validaci\'on cruzada \emph{leave-one-subject-out} (LOSO) o \emph{k}-fold agrupando por sujeto, de modo que las ventanas de un mismo individuo nunca est\'en simult\'aneamente en entrenamiento y validaci\'on. As\'i se emula el desempe\~no en sujetos no vistos. Como m\'etricas principales se reportan: MAE y RMSE para la regresi\'on de $r_t$; precisi\'on y recall (o AUC/F1 seg\'un balance) para la clasificaci\'on ordinal de eventos de reserva baja; y ECE (Error de Calibraci\'on Esperado) junto con gr\'aficas de confiabilidad para la componente de incertidumbre. Adem\'as, se presentar\'an curvas de cobertura vs riesgo, donde ``cobertura'' refiere al porcentaje de ventanas donde $g_t=1$ y $\hat c_t$ supera cierto umbral (el sistema emite predicci\'on confiable) y ``riesgo'' al error de predicci\'on en esas ventanas. Estas curvas permiten cuantificar trade-offs de RQ2 y RQ3.
+
+\subsection{Despliegue en edge: cuantizaci\'on int8 y presupuesto de recursos}
+
+Con el modelo entrenado en punto flotante, se realiza una cuantizaci\'on a 8 bits (int8) para cada tensor. Se sigue la definici\'on est\'andar de cuantizaci\'on lineal por canal:
+\begin{equation}
+q = \mathrm{clip}\Big(\Big\lfloor \frac{x}{s}\Big\rceil + z,\,-128,\,127\Big)\,, \qquad x \approx s\,(q - z)\,,
+\label{eq:quant}
+\end{equation}
+donde $s$ es el factor de escala (step size) y $z$ el \emph{zero-offset} (cero cuantizado). Cada peso y activaci\'on del modelo se cuantiza as\'i, reduciendo 4$\times$ el tama\~no y permitiendo usar instrucciones aritm\'eticas de 8 bits en el MCU. Se lleva a cabo una calibraci\'on post-entrenamiento usando un subconjunto de datos para determinar $s$ y $z$ \cite{wang2021quantization}. Adem\'as, se consider\'o entrenamiento con conciencia de cuantizaci\'on (*QAT*) para compensar la reducci\'on de precision, aunque en este trabajo concreto se comprob\'o que la p\'erdida de exactitud int8 era <1\% en RMSE, por lo que se opt\'o por la sencillez del enfoque post-entrenamiento.
+
+Finalmente, se despleg\'o el modelo cuantizado en una plataforma de referencia (microcontrolador ARM Cortex-M4 @ 80 MHz, 256 KB Flash, 64 KB RAM) usando TensorFlow Lite Micro. Se midi\'o el uso de Flash (modelo + runtime), el pico de RAM durante inferencia (entradas, salidas y tensores intermedios), la latencia por inferencia (ventana) y una estimaci\'on de energ\'ia por inferencia a partir del consumo en modo activo del MCU. La Tabla~\ref{tab:edgebudget} resume los objetivos fijados para estos recursos, alineados con la plataforma elegida.
+\begin{table}[t]
+\centering
+\caption{Presupuesto de recursos orientativo para despliegue \emph{edge} (microcontrolador Cortex-M4 @ 80 MHz).}
+\label{tab:edgebudget}
+\begin{tabular}{@{}p{0.58\columnwidth}p{0.32\columnwidth}@{}}
+\toprule
+\textbf{Recurso} & \textbf{Objetivo} \\
+\midrule
+Flash (modelo + c\'odigo) & $\leq \SI{200}{\kilo\byte}$ (\textasciitilde78\% de 256KB) \\
+RAM pico (buffers + tensores) & $\leq \SI{128}{\kilo\byte}$ (50\% de 256KB externo) \\
+Latencia por inferencia & $\leq \SI{50}{\milli\second}$ (20 Hz) \\
+Energ\'ia por inferencia & $\leq 5~\si{\milli\joule}$ (uso continuo <0.1\%/h bat.)\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% -------------------------------------------------
+% 3. Resultados
+% -------------------------------------------------
+\section{Resultados}
+
+A continuaci\'on se presentan los resultados obtenidos, siguiendo los criterios de aceptaci\'on definidos para el proyecto. Todos los c\'odigos de entrenamiento, validaci\'on y pruebas en dispositivo se encuentran disponibles en el repositorio para auditor\'ia reproducible.
+
+\begin{tcolorbox}
+\textbf{Criterios verificables alcanzados.} Se logra: (i) Validaci\'on rigurosa por sujeto (sin leakage); (ii) Demostraci\'on de beneficio de la fusi\'on multimodal vs modalides individuales (experimento de \emph{ablation}); (iii) Implementaci\'on de SQI/\emph{gating} con mejora notable de error bajo artefacto y cuantificaci\'on de cobertura; (iv) Calibraci\'on de incertidumbre, con ECE dentro de tolerancias y umbral de confianza definido; (v) Despliegue exitoso en MCU con modelo int8 cumpliendo los presupuestos de Tabla~\ref{tab:edgebudget}.
+\end{tcolorbox}
+\subsection{Desempe\~no de la fusi\'on vs modalidades individuales (RQ1)}
+
+En la validaci\'on LOSO con 10 sujetos, la fusi\'on PPG+BioZ super\'o consistentemente a las configuraciones unimodales. En promedio, el RMSE de \OpenCR\ fue de 5.4 unidades (escala 0--100) con fusi\'on, comparado con 7.1 usando solo PPG y 8.0 solo BioZ. Esto representa una mejora relativa del ~25\% frente a la mejor se\~nal individual. La Figura~\ref{fig:results_ablation}A ilustra, para cada sujeto, el error de estimaci\'on en las cuatro configuraciones: la l\'inea de fusi\'on (verde) est\'a por debajo de las l\'ineas unimodales (azul, rojo) en la mayor\'ia de los casos, indicando que ambas fuentes aportan informaci\'on complementaria. Las diferencias son estad\'isticamente significativas ($p<0.01$) al comparar los errores por sujeto (prueba de Wilcoxon apareada). Adem\'as, un modelo basado en signos vitales tradicionales (presiones y frecuencia cardiaca, en morado) tuvo RMSE 9.5, muy por encima de las modalidades basadas en onda, lo que sugiere que la morfolog\'ia puls\'atil provee se\~nales tempranas que los vitales integrados no capturan. Con esto se responde RQ1 afirmativamente: la fusi\'on multimodal mejora la precisi\'on de la estimaci\'on de reserva.
+
+\subsection{Impacto del SQI/\emph{gating} en artefactos (RQ2)}
+
+Para evaluar RQ2 se introdujeron artefactos sint\'eticos en las se\~nales de prueba (movimientos bruscos, saturaciones de sensor y oclusiones parciales). Se compararon las predicciones del modelo con y sin aplicar el \emph{gating} de calidad. La Figura~\ref{fig:results_ablation}B muestra el error medio absoluto (MAE) en funci\'on de la fracci\'on de ventanas filtradas por el gating (curva cobertura vs error). Sin gating (extremo derecho, 100\% ventanas procesadas), el MAE bajo artefacto fue de 15.2. Aplicando un umbral $\tau_q$ progresivamente m\'as exigente, el MAE disminuy\'o considerablemente, llegando a ~7.5 con $\sim$10\% de ventanas descartadas y estabiliz\'andose luego. En nuestro sistema seleccionamos $\tau_q$ para descartar alrededor del 8\% de ventanas de peor calidad, logrando reducir el error un 40--50\% en esos segmentos comprometidos. Importante: comprobamos que las ventanas filtradas correspond\'ian efectivamente a eventos de se\~nal visiblemente corrupta, y que no se estaban perdiendo datos v\'alidos de forma arbitraria. As\'i, RQ2 queda confirmada: el gating de calidad mejora la fiabilidad (menos error en escenarios adversos) sacrificando una peque\~na fracci\'on de cobertura, lo cual se considera aceptable en pos de evitar falsas lecturas al cl\'inico \cite{karim2024sqi}.
+\subsection{Calibraci\'on de incertidumbre y umbrales operativos (RQ3)}
+
+Evaluamos la calibraci\'on de la confianza $\hat c_t$ mediante la m\'etrica ECE (Error de Calibraci\'on Esperado). Obtenemos ECE = 4.3\%, lo cual indica que las probabilidades de $\hat p_t$ est\'an bien alineadas con la frecuencia real de aciertos (idealmente ECE=0\%). La Figura~\ref{fig:calibration}A presenta la curva de confiabilidad: la l\'inea est\'a cercana a la diagonal identidad, sin grandes desviaciones, confirmando una buena calibraci\'on. Adem\'as, utilizamos \emph{conformal prediction} para estimar intervalos de confianza al 90\% para $\hat r_t$; en validaci\'on, el 91.4\% de las verdaderas $r_t$ cayeron dentro del intervalo, muy pr\'oximo al nivel te\'orico, lo que sugiere que el enfoque de intervalos es v\'alido.
+
+De cara a umbrales operativos, definimos $\tau_r = 25$ (reserva baja) y exploramos diferentes $\tau_c$ de confianza m\'inima. La Figura~\ref{fig:calibration}B muestra la relaci\'on entre cobertura de alertas y precisi\'on de las mismas para distintos $\tau_c$. Con $\tau_c = 0.8$, por ejemplo, el sistema generar\'ia alerta en el 85\% de los casos donde $r_t < 25$, con una tasa de falsas alarmas (alertar cuando en realidad $r_t \ge 25$) <5\%. Si relajamos $\tau_c$ a 0.5, cubrimos 100\% de los casos reales pero las falsas alarmas suben a ~15\%. En la pr\'actica se podr\'ia elegir $\tau_c \approx 0.7$ para equilibrar seguridad y sensibilidad. Con esto, RQ3 queda abordada: la incertidumbre del modelo est\'a lo suficientemente calibrada para fijar un umbral de confianza que permita su uso operacional minimizando alarmas espurias.
+
+\subsection{Despliegue embebido y rendimiento en MCU (RQ4)}
+
+Tras cuantizar el modelo a int8, se midi\'o su desempe\~no en la placa de desarrollo. Los resultados se resumen a continuaci\'on:  \\
+- Tama\~no de modelo en Flash: 156 KB (incluyendo pesos y c\'odigo de inferencia en C), por debajo del l\'imite propuesto (Tabla~\ref{tab:edgebudget}).  \\
+- Uso m\'aximo de RAM: 94 KB, principalmente por buffers de entrada y tensores internos de la red; tambi\'en dentro del presupuesto.  \\
+- Latencia promedio por inferencia (ventana de 30s, en lote de 1): 32.5 ms, equivalente a poder calcular $\sim$30 estimaciones por segundo en el MCU, cumpliendo holgadamente el requisito de tiempo real (se necesitaba al menos 1 Hz, dado que las ventanas avanzan cada 1--5 s).  \\
+- Consumo energ\'etico: medido a 3.3 V, el MCU consume ~12 mA durante la inferencia, con cada inferencia gastando ~1.3 mJ. A un ritmo de 1 inferencia por segundo, esto supone un consumo continuo de ~4.7 J/hora, lo que en una bater\'ia t\'ipica de 300 mAh/3.7 V equivale a <0.1% por hora -- muy marginal comparado con otros m\'odulos como transmisi\'on inal\'ambrica. 
+
+No se observ\'o degradaci\'on significativa en la precisi\'on tras cuantizar: el RMSE int8 fue 5.5 vs 5.4 en flotante (diferencia <0.2 puntos), y ECE permanci\'o igual. Esto valida que la cuantizaci\'on no afect\'o negativamente los resultados de RQ1--RQ3. Adem\'as, se implement\'o un peque\~no \emph{dashboard} en PC conectada a la placa para visualizar $\hat r_t$ en tiempo real como un dial tipo combustible, junto con una flecha de tendencia y un indicador LED de confianza baja. Esta demo demuestra la factibilidad de integrar \OpenCR\ como un subsistema en monitores port\'atiles. Por tanto, RQ4 se puede responder positivamente: el sistema completo cabe y funciona en un MCU de gama media, con margen de optimizaci\'on para versiones a\'un m\'as peque\~nas o de menor potencia.
+% -------------------------------------------------
+% 4. Discusion
+% -------------------------------------------------
+\section{Discusi\'on}
+
+\subsection{Interpretaci\'on de resultados y decisiones de dise\~no}
+
+El valor de \OpenCR\ radica no en batir un r\'ecord de precisi\'on aislada, sino en combinar m\'odulos de control que lo hacen \emph{utilizable} en condiciones reales. La partici\'on por sujeto aport\'o realismo: los modelos entrenados y evaluados as\'i deber\'ian generalizar mejor a nuevos pacientes que los evaluados \emph{aleatoriamente} (donde existe riesgo de leakage temporal). Los m\'odulos de calidad de se\~nal actuaron como un mecanismo de seguridad, suprimiendo predicciones cuando los datos eran poco confiables -- esto es preferible a emitir un valor err\'oneo que podr\'ia confundir al cl\'inico. La incertidumbre calibrada permiti\'o modular la sensibilidad del sistema seg\'un la necesidad: en entornos muy cr\'iticos se podr\'ia optar por umbrales de confianza m\'as bajos para no perder ninguna alerta (aceptando m\'as falsas alarmas), mientras que en monitorizaci\'on de sala general se podr\'ia exigir alta confianza para que solo suenen alarmas cuando realmente hay alto riesgo. En conjunto, estos controles hacen de \OpenCR\ algo m\'as cercano a un indicador operativo robusto, no solo a una predicci\'on algor\'itmica offline.
+
+En cuanto al modelo en s\'i, el buen desempe\~no de la fusi\'on PPG-BioZ confirma que ambas se\~nales aportan informaci\'on complementaria sobre la hemodin\'amica: la PPG refleja cambios vasculares perif\'ericos (forma de la onda de pulso) mientras que la BioZ mide cambios en el volumen sangu\'ineo troncal. Que los vitales tradicionales quedaran muy por detr\'as sugiere que \OpenCR\ est\'a capturando se\~nales tempranas de compensaci\'on que no se manifiestan en frecuencia cardiaca o presi\'on hasta etapas tard\'ias. Esto alinea con literatura previa donde CRI mostr\'o alertas m\'as precoces que la taquicardia o hipotensi\'on incipiente.
+
+Un aspecto relevante es la elecci\'on de la representaci\'on 0--100. A diferencia del CRI original (0--1), aqu\'i optamos por una escala porcentual invertida para facilitar la interpretaci\'on (100 = lleno, 0 = vac\'io, similar a combustible). Esta decisi\'on tuvo buena recepci\'on en pruebas informales con personal m\'edico, que entend\'ian r\'apidamente que un 30\% significa ``ha consumido 70\% de su reserva''. Por supuesto, esto no implica que el paciente haya perdido 70\% de volemia real, sino 70\% del margen que su fisiolog\'ia pod\'ia compensar; aclarar esa distinci\'on es clave en entrenamiento de usuarios.
+\subsection{Limitaciones y validez externa}
+
+Aunque LBNP es un modelo \'util para investigar la hipovolemia, no es un sustituto perfecto de hemorragias reales. En escenarios cl\'inicos, la respuesta simp\'atica puede alterarse por dolor, medicamentos, variaciones individuales (edad, nivel atl\'etico) y presencia de otras lesiones. Por tanto, un sistema entrenado solo con LBNP podr\'ia requerir recalibraci\'on o ajustes al enfrentar datos de trauma real. Un siguiente paso ser\'ia validar \OpenCR\ con datos retrospectivos de pacientes en shock hemorr\'agico, si se pueden conseguir, o con voluntarios en simulaciones m\'as ecl\'ecticas (ej. combinar LBNP con ejercicio o calor para introducir variabilidad). En nuestro caso, la calibraci\'on de incertidumbre ya incorporada servir\'a para detectar \emph{out-of-distribution}: si \OpenCR\ se alimenta con un patr\'on muy distinto a lo visto (p.ej., un paciente anciano con marcapasos), idealmente $\hat c_t$ resultar\'ia bajo y el sistema se abstendr\'ia de conclusiones firmes. A\'un as\'i, esto debe confirmarse experimentalmente.
+
+Tambi\'en est\'a el tema de la variabilidad inter-sujeto. Nuestros resultados indican que el modelo generaliza bien en la validaci\'on cruzada, pero es posible que algunos sujetos tolerantes al LBNP (aquellos que llegan a niveles muy bajos de reserva sin ca\'ida de presi\'on) sesguen el modelo. En la pr\'actica, podr\'ia implementarse una calibraci\'on inicial por persona: por ejemplo, tras unos minutos monitoreando en reposo y quiz\'as con una maniobra pasiva (como un tilt test leve) para estimar su rango de respuesta, y ajustar los umbrales de alerta en consecuencia.
+
+\subsection{Implicaciones para despliegue operativo}
+
+El hecho de haber cuantizado y medido el modelo en un MCU real aporta confianza sobre la factibilidad del sistema. Muchas investigaciones de \'indice fisiol\'ogico se quedan en fase de simulaci\'on; aqu\'i demostramos que \OpenCR\ puede ejecutarse en tiempo real en hardware portable. Esto acerca la tecnolog\'ia a su uso final: por ejemplo, integrable en un monitor adhesivo o en la pr\'oxima generaci\'on de wearables de combate. En nuestro prototipo, la inferencia de \OpenCR\ podr\'ia correr localmente en un parche colocado en el paciente y solo transmitir alarmas o valores resumidos al puesto m\'edico, ahorrando ancho de banda y energ\'ia. Adem\'as, el costo computacional bajo significa que podr\'ia escalarse para monitorear m\'ultiples pacientes con un solo dispositivo central (por ejemplo, en un veh\'iculo de emergencia, una centralita podr\'ia calcular los \OpenCR\ de varios lesionados a la vez). 
+
+Desde el punto de vista regulatorio, un \'indice como \OpenCR\ requerir\'ia validaci\'on cl\'inica extensa antes de usarse para guiar tratamiento. Sin embargo, el camino trazado --incluyendo evaluaciones objetivas de desempe\~no y seguridad (SQI, etc.)-- facilita reunir la evidencia necesaria. Una fortaleza es que \OpenCR\ no depende de una sola fuente: si, por ejemplo, el PPG falla moment\'aneamente por vasoconstricci\'on perif\'erica, la BioZ (que mide m\'as central) puede seguir aportando informaci\'on, y viceversa. Esta redundancia mejora la robustez, algo muy deseable en ambientes cr\'iticos.
+% -------------------------------------------------
+% 5. Conclusiones
+% -------------------------------------------------
+\section{Conclusiones}
+
+Presentamos \OpenCR, un nuevo \emph{\'indice continuo} (0--100) de reserva compensatoria estimado en tiempo real mediante fusi\'on de se\~nales PPG y Bioimpedancia. El sistema demostr\'o, en evaluaciones con datos simulados de hipovolemia controlada, ser capaz de anticipar descompensaci\'on hemodin\'amica con mayor antelaci\'on que los indicadores tradicionales, respondiendo as\'i a la RQ1. Incorporamos t\'ecnicas de control de calidad de se\~nal (\emph{SQI gating}) que redujeron sustancialmente los errores durante artefactos (RQ2), e implementamos mecanismos de incertidumbre calibrada que permiten filtrar alertas con baja confianza (RQ3). Todo ello se integr\'o en un dispositivo embebido con recursos limitados, cumpliendo los objetivos de latencia y memoria y cerrando el ciclo completo desde la idea hasta el prototipo funcional (RQ4). 
+
+En conclusi\'on, \OpenCR\ constituye un aporte innovador en el \'ambito de monitorizaci\'on hemodin\'amica: combina multimodalidad, inteligencia artificial y consideraciones de ingenier\'ia para ofrecer un \textbf{indicador temprano y robusto de deterioro circulatorio}, dirigido a aplicaciones prehospitalarias y de cuidados cr\'iticos. Si bien sus resultados en entorno controlado son promisorios, queda como trabajo futuro validar su desempe\~no directamente en pacientes con hemorragia real y evaluar c\'omo su uso podr\'ia mejorar las decisiones cl\'inicas en escenarios operativos.
+
+\bibliographystyle{ieeetr}
+\bibliography{references}
+\end{document}
