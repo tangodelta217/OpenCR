@@ -55,6 +55,7 @@ runs/*
 docs/figures/
 docs/tables/
 docs/manifest.json
+docs/opencr_imrad.pdf
 
 # Model artifacts
 *.onnx
