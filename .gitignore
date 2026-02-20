@@ -76,3 +76,14 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+.internal/
+obj/
+tests/obj/
+tests/bin/
+.pocl_kcache/
+*.o
+*.ali
+*.stdout
+*.stderr
+*.bexch
+docs/VV/Execution_Logs/local/
